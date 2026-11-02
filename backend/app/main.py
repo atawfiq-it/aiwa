@@ -2,14 +2,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
+from app.api.v1.chat import router as chat_router
+from app.api.v1.models import router as models_router
 from app.core.config import settings
 from app.core.security import cleanup_session_token, generate_session_token, verify_local_token
 from app.database.engine import run_migrations
+from app.supervisors.model_supervisor import model_supervisor
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Run migrations & issue ephemeral local session token
     run_migrations()
     token = generate_session_token()
     print(
@@ -17,7 +19,8 @@ async def lifespan(app: FastAPI):
         f"(written to {settings.TOKEN_FILE_PATH})\n"
     )
     yield
-    # Shutdown: Cleanup token
+    # Shutdown
+    await model_supervisor.unload_model()
     cleanup_session_token()
 
 
@@ -28,6 +31,10 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+# Mount Routers
+app.include_router(models_router, prefix=settings.API_V1_PREFIX)
+app.include_router(chat_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/api/v1/health")

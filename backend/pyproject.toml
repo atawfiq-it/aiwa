@@ -15,6 +15,7 @@ dependencies = [
     "pymupdf4llm>=0.0.17",
     "python-multipart>=0.0.9",
     "pydantic>=2.8.2",
+    "pynvml>=11.5.0",
 ]
 
 [project.optional-dependencies]
