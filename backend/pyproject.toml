@@ -29,6 +29,10 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Direct Hatchling to use 'app' as the package
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -43,6 +47,9 @@ select = [
     "UP",  # pyupgrade
 ]
 ignore = ["B008"] # allow FastAPI Depends() in argument defaults
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/versions/*" = ["E501"] # Ignore line length on auto-generated migrations
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

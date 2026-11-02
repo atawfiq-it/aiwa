@@ -1,28 +1,30 @@
+export UV_LINK_MODE := "copy"
+
 default:
     @just --list
 
 # Install all backend dependencies and pre-commit hooks
 install:
-    cd backend && uv sync --all-extras
-    uv run pre-commit install
+    uv sync --project backend --all-extras
+    uv run --project backend pre-commit install
 
 # Run code formatters and linters
 lint:
-    cd backend && uv run ruff check .
-    cd backend && uv run ruff format --check .
+    uv run --project backend ruff check backend
+    uv run --project backend ruff format --check backend
 
 # Automatically fix formatting and lint issues
 format:
-    cd backend && uv run ruff check --fix .
-    cd backend && uv run ruff format .
+    uv run --project backend ruff check --fix backend
+    uv run --project backend ruff format backend
 
 # Run the test suite
 test:
-    cd backend && uv run pytest
+    uv run --project backend pytest backend/tests
 
 # Launch the backend development server
 dev:
-    cd backend && uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+    uv run --project backend uvicorn app.main:app --reload --app-dir backend --host 127.0.0.1 --port 8000
 
 # Generate a new Alembic migration revision
 migrate-new message:
