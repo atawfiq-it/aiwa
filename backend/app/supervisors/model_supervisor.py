@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -109,7 +109,7 @@ class ModelSupervisor:
                 # Wait for server /health readiness
                 await self._wait_for_ready(timeout_seconds=60)
                 self.state = ModelState.READY
-                self.last_active_at = datetime.utcnow()
+                self.last_active_at = datetime.now(UTC)
                 logger.info(f"Model {model.display_name} loaded and ready.")
             except Exception as e:
                 self.state = ModelState.FAILED

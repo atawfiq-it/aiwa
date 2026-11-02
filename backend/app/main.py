@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 
 from app.api.v1.chat import router as chat_router
+from app.api.v1.conversations import router as conversations_router
+from app.api.v1.files import router as files_router
 from app.api.v1.models import router as models_router
 from app.core.config import settings
 from app.core.security import cleanup_session_token, generate_session_token, verify_local_token
@@ -35,6 +37,8 @@ app = FastAPI(
 # Mount Routers
 app.include_router(models_router, prefix=settings.API_V1_PREFIX)
 app.include_router(chat_router, prefix=settings.API_V1_PREFIX)
+app.include_router(files_router, prefix=settings.API_V1_PREFIX)
+app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/api/v1/health")
