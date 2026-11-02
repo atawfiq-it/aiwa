@@ -1,2 +1,44 @@
-*.txt
-*.md
+# Python & Environment
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# uv & Tools
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Tauri & Node (Desktop Shell)
+apps/desktop/node_modules/
+apps/desktop/src-tauri/target/
+
+# Local Application Data & Large Binaries (Crucial for AI/ML)
+data/database/*.db
+data/database/*.db-journal
+data/database/*.db-wal
+data/database/*.db-shm
+data/models/**/*.gguf
+data/models/**/*.bin
+data/uploads/*
+data/generated/*
+data/vector_store/*
+data/cache/*
+data/logs/*
+!data/**/.gitkeep
+
+# IDEs & System
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+*.local.env
+.env
