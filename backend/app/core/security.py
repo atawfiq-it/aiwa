@@ -1,5 +1,6 @@
 import os
 import secrets
+from pathlib import Path
 
 from fastapi import Header, HTTPException, status
 
@@ -48,3 +49,17 @@ async def verify_local_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing local authorization token",
         )
+
+
+def validate_safe_path(target_path: Path, allowed_parent: Path) -> Path:
+    """Guarantees target path is strictly within the allowed parent directory."""
+    resolved_target = target_path.resolve()
+    resolved_parent = allowed_parent.resolve()
+    try:
+        resolved_target.relative_to(resolved_parent)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Path traversal detected outside allowed directory.",
+        ) from e
+    return resolved_target

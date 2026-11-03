@@ -13,6 +13,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    ENVIRONMENT: str = "development"  # "development" | "production"
+
     # API Configuration
     PROJECT_NAME: str = "Local Multimodal AI Workstation"
     VERSION: str = "0.1.0"
@@ -44,6 +46,10 @@ class Settings(BaseSettings):
     VRAM_SAFETY_MARGIN_MB: int = 1024  # Keep 1GB safety cushion
     COMFYUI_BASE_URL: str = "http://127.0.0.1:8188"
     TASK_WORKER_POLL_INTERVAL_SECONDS: float = 1.0
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
 
     def model_post_init(self, __context) -> None:
         # Guarantee local directories exist

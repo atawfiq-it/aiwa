@@ -38,3 +38,21 @@ migrate-new message:
 # Apply database migrations
 migrate-up:
     cd backend && uv run alembic upgrade head
+
+# Package backend into a standalone native binary sidecar
+build-backend-sidecar:
+    cd backend && uv run pyinstaller \
+        --name aiwa-backend \
+        --onefile \
+        --noconfirm \
+        --clean \
+        --add-data "migrations:migrations" \
+        app/main.py
+    # Copy compiled binary into Tauri external binaries directory
+    mkdir -p apps/desktop/src-tauri/binaries
+    cp backend/dist/aiwa-backend apps/desktop/src-tauri/binaries/aiwa-backend-x86_64-unknown-linux-gnu
+
+# Build native desktop application release
+build-desktop: build-backend-sidecar
+    cd apps/desktop && npm run build
+    cd apps/desktop && npm run tauri build

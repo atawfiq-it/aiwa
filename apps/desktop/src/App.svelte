@@ -161,6 +161,35 @@
     }
   }
 
+  async function loadInitialData() {
+    // 1. Attempt native Tauri token handshake first
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const nativeToken = await invoke<string>('get_session_token');
+      if (nativeToken) {
+        token = nativeToken;
+      }
+    } catch {
+      // In standalone browser mode, user can manually supply token or enter via Settings
+    }
+
+    // 2. Health check verification
+    try {
+      const healthRes = await fetch('http://127.0.0.1:8000/api/v1/health');
+      if (healthRes.ok) {
+        connectionStatus = 'Backend Connected';
+        if (token) {
+          loadKnowledgeBases();
+          loadTasks();
+          loadGallery();
+          loadSupervisor();
+        }
+      }
+    } catch {
+      connectionStatus = 'Backend Offline';
+    }
+  }
+
   onMount(() => {
     checkBackend();
     const interval = setInterval(() => {

@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
-import app.services.tasks.workflow_handlers
+import app.services.tasks.workflow_handlers  # noqa: F401
 from app.api.v1.agents import router as agents_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.conversations import router as conversations_router
@@ -34,31 +34,40 @@ async def lifespan(app: FastAPI):
     cleanup_session_token()
 
 
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version=settings.VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan,
-)
+def create_app() -> FastAPI:
+    docs_url = None if settings.is_production else "/docs"
+    redoc_url = None if settings.is_production else "/redoc"
+    openapi_url = None if settings.is_production else "/openapi.json"
 
-# Mount Routers
-app.include_router(models_router, prefix=settings.API_V1_PREFIX)
-app.include_router(chat_router, prefix=settings.API_V1_PREFIX)
-app.include_router(files_router, prefix=settings.API_V1_PREFIX)
-app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)
-app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
-app.include_router(media_router, prefix=settings.API_V1_PREFIX)
-app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
-app.include_router(agents_router, prefix=settings.API_V1_PREFIX)
-app.include_router(workflows_router, prefix=settings.API_V1_PREFIX)
+    application = FastAPI(
+        title=settings.PROJECT_NAME,
+        version=settings.VERSION,
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=openapi_url,
+        lifespan=lifespan,
+    )
+
+    # Mount Routers
+    application.include_router(models_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(chat_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(files_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(conversations_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(media_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(kb_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(agents_router, prefix=settings.API_V1_PREFIX)
+    application.include_router(workflows_router, prefix=settings.API_V1_PREFIX)
+
+    @application.get("/api/v1/health")
+    async def health_check():
+        return {"status": "ok", "version": settings.VERSION}
+
+    @application.get("/api/v1/auth/verify", dependencies=[Depends(verify_local_token)])
+    async def verify_auth():
+        return {"status": "authenticated"}
+
+    return application
 
 
-@app.get("/api/v1/health")
-async def health_check():
-    return {"status": "ok", "version": settings.VERSION}
-
-
-@app.get("/api/v1/auth/verify", dependencies=[Depends(verify_local_token)])
-async def verify_auth():
-    return {"status": "authenticated"}
+app = create_app()
