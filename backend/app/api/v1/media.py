@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import shutil
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.core.security import verify_local_token
 from app.database.engine import get_db
 from app.database.models import Attachment, GeneratedFile, Task
@@ -18,6 +22,16 @@ class ImageGenerationRequest(BaseModel):
     width: int = 512
     height: int = 512
     steps: int = 20
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1)
+    voice: str = "af_heart"
+
+
+class STTRequest(BaseModel):
+    attachment_id: str
+    model_size: str = "base"
 
 
 @router.get("/comfyui/status")
@@ -45,22 +59,15 @@ def list_generated_media(db: Session = Depends(get_db)):
 def download_media_file(file_id: str, db: Session = Depends(get_db)):
     file_record = db.get(GeneratedFile, file_id)
     if not file_record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media file not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Media file not found",
+        )
     return FileResponse(
         path=file_record.file_path,
         media_type=file_record.mime_type,
         filename=file_record.file_name,
     )
-
-
-class TTSRequest(BaseModel):
-    text: str = Field(min_length=1)
-    voice: str = "af_heart"
-
-
-class STTRequest(BaseModel):
-    attachment_id: str
-    model_size: str = "base"
 
 
 @router.get("/audio/status")
@@ -81,13 +88,49 @@ def create_text_to_speech(req: TTSRequest):
     )
 
 
+@router.post("/audio/speech-direct")
+async def speech_direct(req: TTSRequest):
+    from app.services.media.audio_service import audio_service
+
+    out_path = audio_service.generate_speech(req.text, voice=req.voice)
+    return FileResponse(
+        path=str(out_path),
+        media_type="audio/wav",
+        filename=out_path.name,
+    )
+
+
 @router.post("/audio/transcribe", response_model=Task)
 def transcribe_audio(req: STTRequest, db: Session = Depends(get_db)):
     att = db.get(Attachment, req.attachment_id)
     if not att:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment not found",
+        )
 
     return task_queue.submit_task(
         task_type="audio_transcription",
         parameters={"file_path": att.file_path, "model_size": req.model_size},
     )
+
+
+@router.post("/audio/transcribe-direct")
+async def transcribe_audio_direct(
+    file: UploadFile,
+    model_size: str = "base",
+):
+    safe_name = f"mic_{uuid.uuid4().hex[:8]}.webm"
+    temp_path = settings.UPLOADS_DIR / safe_name
+
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        from app.services.media.audio_service import audio_service
+
+        result = audio_service.transcribe_audio(temp_path, model_size=model_size)
+        return {"text": result["text"], "language": result.get("language")}
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
