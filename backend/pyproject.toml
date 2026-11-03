@@ -56,7 +56,10 @@ select = [
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
 ]
-ignore = ["B008"] # allow FastAPI Depends() in argument defaults
+ignore = [
+    "B008", # allow FastAPI Depends() in argument defaults
+    "E501", # disable line-length enforcement on format and lint
+    ]
 
 [tool.ruff.lint.per-file-ignores]
 "migrations/versions/*" = ["E501"] # Ignore line length on auto-generated migrations

@@ -128,3 +128,33 @@ class DocumentRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
     knowledge_base: KnowledgeBase | None = Relationship(back_populates="documents")
+
+
+class Agent(SQLModel, table=True):
+    __tablename__ = "agents"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = None
+    system_prompt: str = Field(
+        default="You are an autonomous AI assistant equipped with specialized tools."
+    )
+    tools_json: str = Field(default="[]")  # JSON list of allowed tool names
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ToolExecution(SQLModel, table=True):
+    __tablename__ = "tool_executions"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    agent_id: str | None = Field(default=None, foreign_key="agents.id", index=True)
+    tool_name: str = Field(index=True)
+    arguments_json: str = Field(default="{}")
+    status: str = Field(
+        default="pending_approval", index=True
+    )  # "pending_approval", "approved", "rejected", "completed", "failed"
+    result_json: str | None = None
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
