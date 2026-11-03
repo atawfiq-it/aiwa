@@ -70,3 +70,32 @@ class AppSetting(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: str
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Task(SQLModel, table=True):
+    __tablename__ = "tasks"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    task_type: str = Field(index=True)  # e.g., "image_generation", "rag_indexing", "stt"
+    status: str = Field(default="pending", index=True)
+    progress_percent: int = Field(default=0)
+    parameters: str = Field(default="{}")  # JSON-encoded input parameters
+    result: str | None = Field(default=None)  # JSON-encoded output or artifact info
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class GeneratedFile(SQLModel, table=True):
+    __tablename__ = "generated_files"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    task_id: str | None = Field(default=None, foreign_key="tasks.id", index=True)
+    file_type: str = Field(index=True)  # "image", "audio", "document"
+    file_name: str
+    file_path: str  # Absolute path on disk in data/generated/
+    mime_type: str
+    file_size_bytes: int
+    prompt: str | None = None
+    metadata_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utc_now)

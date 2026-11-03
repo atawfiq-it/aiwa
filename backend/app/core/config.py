@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     LLAMA_PARALLEL_SLOTS: int = 4
     DEFAULT_STATIC_VRAM_GB: float = 8.0  # Fallback VRAM budget when pynvml is unavailable
     VRAM_SAFETY_MARGIN_MB: int = 1024  # Keep 1GB safety cushion
+    COMFYUI_BASE_URL: str = "http://127.0.0.1:8188"
+    TASK_WORKER_POLL_INTERVAL_SECONDS: float = 1.0
 
     def model_post_init(self, __context) -> None:
         # Guarantee local directories exist

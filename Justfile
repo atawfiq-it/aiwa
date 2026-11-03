@@ -7,6 +7,11 @@ default:
 install:
     uv sync --project backend --all-extras
     uv run --project backend pre-commit install
+    cd apps/desktop && npm install
+
+# Launch desktop UI in web dev mode
+ui-dev:
+    cd apps/desktop && npm run dev
 
 # Run code formatters and linters
 lint:
