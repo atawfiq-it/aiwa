@@ -10,17 +10,40 @@ from sse_starlette.sse import ServerSentEvent
 from app.database.engine import engine
 from app.database.models import Message
 from app.schemas.chat import ChatMessage
+from app.services.embeddings.rag_service import rag_service
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
 
-def format_messages_for_llm(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+def format_messages_for_llm(
+    messages: list[ChatMessage],
+    knowledge_base_id: str | None = None,
+) -> list[dict[str, Any]]:
     formatted = []
-    for msg in messages:
+
+    # If RAG is enabled, retrieve context using the latest user message
+    rag_context = ""
+    if knowledge_base_id and messages:
+        last_user_msg = next((m.content for m in reversed(messages) if m.role == "user"), None)
+        if last_user_msg:
+            results = rag_service.search_similar(knowledge_base_id, last_user_msg, limit=3)
+            if results:
+                snippets = [f"[{r['file_name']}]:\n{r['text']}" for r in results]
+                rag_context = (
+                    "\n\nRelevant Context from Knowledge Base:\n"
+                    + "\n---\n".join(snippets)
+                    + "\n\nPlease use the above context to inform your answer when relevant."
+                )
+
+    for i, msg in enumerate(messages):
+        content_text = msg.content
+        # Append RAG context to the last user message
+        if i == len(messages) - 1 and msg.role == "user" and rag_context:
+            content_text = f"{content_text}\n{rag_context}"
+
         if not msg.image_paths:
-            formatted.append({"role": msg.role, "content": msg.content})
+            formatted.append({"role": msg.role, "content": content_text})
         else:
-            # Multi-part content with local file references
-            parts: list[dict[str, Any]] = [{"type": "text", "text": msg.content}]
+            parts: list[dict[str, Any]] = [{"type": "text", "text": content_text}]
             for img_path in msg.image_paths:
                 parts.append(
                     {
@@ -29,12 +52,14 @@ def format_messages_for_llm(messages: list[ChatMessage]) -> list[dict[str, Any]]
                     }
                 )
             formatted.append({"role": msg.role, "content": parts})
+
     return formatted
 
 
 async def stream_chat_completion(
     messages: list[ChatMessage],
     conversation_id: str | None = None,
+    knowledge_base_id: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> AsyncGenerator[ServerSentEvent, None]:
@@ -43,7 +68,6 @@ async def stream_chat_completion(
         yield ServerSentEvent(event="error", data=json.dumps({"error": err_msg}))
         return
 
-    # Check vision capability if images are present
     has_images = any(len(m.image_paths or []) > 0 for m in messages)
     if has_images and not model_supervisor.active_model.vision_supported:
         err_msg = (
@@ -62,7 +86,7 @@ async def stream_chat_completion(
     try:
         url = f"{model_supervisor.base_url}/v1/chat/completions"
         payload = {
-            "messages": format_messages_for_llm(messages),
+            "messages": format_messages_for_llm(messages, knowledge_base_id),
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
@@ -74,7 +98,7 @@ async def stream_chat_completion(
                     err_body = await response.aread()
                     yield ServerSentEvent(
                         event="error",
-                        data=json.dumps({"error": f"Inference engine error: {err_body.decode()}"}),
+                        data=json.dumps({"error": f"Inference error: {err_body.decode()}"}),
                     )
                     return
 
@@ -98,7 +122,6 @@ async def stream_chat_completion(
                         except json.JSONDecodeError:
                             continue
 
-        # Persist completed assistant message if conversation_id was provided
         if conversation_id and accumulated_response:
             full_text = "".join(accumulated_response)
             with Session(engine) as db:

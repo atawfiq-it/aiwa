@@ -9,6 +9,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
+    knowledge_base_id: str | None = None
     messages: list[ChatMessage]
     temperature: float = 0.7
     max_tokens: int = 2048

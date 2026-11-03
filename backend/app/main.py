@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from app.api.v1.chat import router as chat_router
 from app.api.v1.conversations import router as conversations_router
 from app.api.v1.files import router as files_router
+from app.api.v1.knowledge_bases import router as kb_router
 from app.api.v1.media import router as media_router
 from app.api.v1.models import router as models_router
 from app.api.v1.tasks import router as tasks_router
@@ -45,6 +46,7 @@ app.include_router(files_router, prefix=settings.API_V1_PREFIX)
 app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(media_router, prefix=settings.API_V1_PREFIX)
+app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/api/v1/health")

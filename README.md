@@ -12,3 +12,11 @@ just dev
 just ui-dev
 #  ➜  Local:   http://localhost:5173/
 #  ➜  Network: use --host to expose
+
+# Database Migration
+just migrate-new "......."
+just migrate-up
+
+# Format and Test
+just format
+just test

@@ -24,7 +24,7 @@ class Message(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     conversation_id: str = Field(foreign_key="conversations.id", index=True)
-    role: str = Field(index=True)  # "system", "user", "assistant"
+    role: str = Field(index=True)
     content: str = Field(default="")
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -38,7 +38,7 @@ class Attachment(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     message_id: str | None = Field(default=None, foreign_key="messages.id", index=True)
     file_name: str
-    file_path: str  # Absolute path on disk in data/uploads/
+    file_path: str
     mime_type: str
     file_size_bytes: int
     created_at: datetime = Field(default_factory=utc_now)
@@ -76,11 +76,11 @@ class Task(SQLModel, table=True):
     __tablename__ = "tasks"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    task_type: str = Field(index=True)  # e.g., "image_generation", "rag_indexing", "stt"
+    task_type: str = Field(index=True)
     status: str = Field(default="pending", index=True)
     progress_percent: int = Field(default=0)
-    parameters: str = Field(default="{}")  # JSON-encoded input parameters
-    result: str | None = Field(default=None)  # JSON-encoded output or artifact info
+    parameters: str = Field(default="{}")
+    result: str | None = Field(default=None)
     error_message: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -91,11 +91,40 @@ class GeneratedFile(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     task_id: str | None = Field(default=None, foreign_key="tasks.id", index=True)
-    file_type: str = Field(index=True)  # "image", "audio", "document"
+    file_type: str = Field(index=True)
     file_name: str
-    file_path: str  # Absolute path on disk in data/generated/
+    file_path: str
     mime_type: str
     file_size_bytes: int
     prompt: str | None = None
     metadata_json: str = Field(default="{}")
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class KnowledgeBase(SQLModel, table=True):
+    __tablename__ = "knowledge_bases"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = None
+    embedding_model: str = Field(default="BAAI/bge-small-en-v1.5")
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    documents: list["DocumentRecord"] = Relationship(
+        back_populates="knowledge_base", cascade_delete=True
+    )
+
+
+class DocumentRecord(SQLModel, table=True):
+    __tablename__ = "documents"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    knowledge_base_id: str = Field(foreign_key="knowledge_bases.id", index=True)
+    file_name: str
+    file_path: str
+    num_chunks: int = Field(default=0)
+    status: str = Field(default="pending")
+    created_at: datetime = Field(default_factory=utc_now)
+
+    knowledge_base: KnowledgeBase | None = Relationship(back_populates="documents")
