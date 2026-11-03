@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
+import app.services.tasks.workflow_handlers
 from app.api.v1.agents import router as agents_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.conversations import router as conversations_router
@@ -10,6 +11,7 @@ from app.api.v1.knowledge_bases import router as kb_router
 from app.api.v1.media import router as media_router
 from app.api.v1.models import router as models_router
 from app.api.v1.tasks import router as tasks_router
+from app.api.v1.workflows import router as workflows_router
 from app.core.config import settings
 from app.core.security import cleanup_session_token, generate_session_token, verify_local_token
 from app.database.engine import run_migrations
@@ -49,6 +51,7 @@ app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(media_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agents_router, prefix=settings.API_V1_PREFIX)
+app.include_router(workflows_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/api/v1/health")

@@ -158,3 +158,31 @@ class ToolExecution(SQLModel, table=True):
     error_message: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     completed_at: datetime | None = None
+
+
+class Workflow(SQLModel, table=True):
+    __tablename__ = "workflows"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = None
+    steps_json: str = Field(default="[]")  # JSON list of step specifications
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class WorkflowRun(SQLModel, table=True):
+    __tablename__ = "workflow_runs"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workflow_id: str = Field(foreign_key="workflows.id", index=True)
+    status: str = Field(
+        default="running", index=True
+    )  # "running", "completed", "failed", "cancelled"
+    current_step_index: int = Field(default=0)
+    total_steps: int = Field(default=0)
+    current_task_id: str | None = None
+    input_data_json: str = Field(default="{}")
+    context_data_json: str = Field(default="{}")  # Accumulated step outputs
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
