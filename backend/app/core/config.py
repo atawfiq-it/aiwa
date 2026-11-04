@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     VRAM_SAFETY_MARGIN_MB: int = 1024  # Keep 1GB safety cushion
     COMFYUI_BASE_URL: str = "http://127.0.0.1:8188"
     TASK_WORKER_POLL_INTERVAL_SECONDS: float = 1.0
+    MAX_GPU_USAGE_PERCENT: float = 90.0  # Max 90% of VRAM allowed for model allocation
 
     @property
     def is_production(self) -> bool:

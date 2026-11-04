@@ -17,52 +17,75 @@ class VRAMArbiter:
 
             pynvml.nvmlInit()
             self._has_nvml = True
-            logger.info("NVML initialized successfully. Hardware GPU monitoring enabled.")
+            logger.info("NVML initialized. Dynamic GPU allocation active.")
         except Exception as e:
             self._has_nvml = False
             logger.warning(
-                f"NVML unavailable ({e}). Using static VRAM budget: "
+                f"NVML unavailable ({e}). Using static fallback budget: "
                 f"{settings.DEFAULT_STATIC_VRAM_GB} GB"
             )
 
     def get_vram_status(self) -> dict[str, Any]:
-        """Returns total, free, and used VRAM in megabytes."""
+        """Returns total, free, used, and allowed budget in MB."""
         if self._has_nvml:
             try:
                 import pynvml
 
                 handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                 info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                total_mb = int(info.total / (1024 * 1024))
+                used_mb = int(info.used / (1024 * 1024))
+                free_mb = int(info.free / (1024 * 1024))
+                allowed_ceiling_mb = int(total_mb * (settings.MAX_GPU_USAGE_PERCENT / 100.0))
+                effective_free_mb = max(0, allowed_ceiling_mb - used_mb)
+
                 return {
                     "provider": "nvidia_nvml",
-                    "total_mb": int(info.total / (1024 * 1024)),
-                    "free_mb": int(info.free / (1024 * 1024)),
-                    "used_mb": int(info.used / (1024 * 1024)),
+                    "total_mb": total_mb,
+                    "used_mb": used_mb,
+                    "free_mb": free_mb,
+                    "max_usage_percent": settings.MAX_GPU_USAGE_PERCENT,
+                    "allowed_ceiling_mb": allowed_ceiling_mb,
+                    "effective_free_mb": effective_free_mb,
                 }
             except Exception as e:
                 logger.error(f"Failed querying NVML: {e}")
 
-        # Fallback to configured static budget
         total_mb = int(settings.DEFAULT_STATIC_VRAM_GB * 1024)
+        allowed_ceiling_mb = int(total_mb * (settings.MAX_GPU_USAGE_PERCENT / 100.0))
         return {
             "provider": "static_fallback",
             "total_mb": total_mb,
-            "free_mb": total_mb,
             "used_mb": 0,
+            "free_mb": total_mb,
+            "max_usage_percent": settings.MAX_GPU_USAGE_PERCENT,
+            "allowed_ceiling_mb": allowed_ceiling_mb,
+            "effective_free_mb": allowed_ceiling_mb,
         }
 
-    def estimate_vram_required_mb(self, file_size_bytes: int, context_length: int) -> int:
-        """Estimate VRAM required for model weights + KV cache."""
-        weights_mb = int(file_size_bytes / (1024 * 1024))
-        # Approximation: ~1MB KV cache per 1k tokens for typical 7B-14B models
+    def calculate_optimal_gpu_layers(
+        self,
+        file_size_bytes: int,
+        context_length: int,
+        total_model_layers: int = 28,
+    ) -> int:
+        """Calculates how many layers can fit strictly within the 80% VRAM budget."""
+        status = self.get_vram_status()
+        available_mb = status["effective_free_mb"]
+
         kv_cache_mb = int((context_length / 1024) * 64)
         runtime_overhead_mb = 256
-        return weights_mb + kv_cache_mb + runtime_overhead_mb
+        usable_for_weights_mb = available_mb - (kv_cache_mb + runtime_overhead_mb)
 
-    def can_fit_model(self, estimated_mb: int) -> bool:
-        status = self.get_vram_status()
-        available_mb = status["free_mb"] - settings.VRAM_SAFETY_MARGIN_MB
-        return estimated_mb <= available_mb
+        if usable_for_weights_mb <= 0:
+            return 0  # Run on CPU
+
+        total_weights_mb = int(file_size_bytes / (1024 * 1024))
+        mb_per_layer = total_weights_mb / total_model_layers
+
+        # How many layers fit in usable VRAM?
+        fit_layers = int(usable_for_weights_mb / mb_per_layer)
+        return max(0, min(total_model_layers, fit_layers))
 
 
 vram_arbiter = VRAMArbiter()

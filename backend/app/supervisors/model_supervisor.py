@@ -53,12 +53,13 @@ class ModelSupervisor:
         async with self.lock:
             if self.active_model and self.active_model.id == model.id:
                 if self.state == ModelState.READY:
+                    logger.info(f"Model '{model.display_name}' is already loaded and ready.")
                     return
 
             if self.active_requests > 0:
                 raise RuntimeError("Cannot switch models while inference requests are active")
 
-            # Unload any active model first
+            # Terminate any previously running model process first
             if self.process:
                 await self._stop_process()
 
@@ -67,17 +68,24 @@ class ModelSupervisor:
                 self.state = ModelState.FAILED
                 raise FileNotFoundError(f"Model file not found at: {model.file_path}")
 
-            # Verify VRAM limits
-            est_mb = vram_arbiter.estimate_vram_required_mb(
-                model_path.stat().st_size, model.context_length
-            )
-            if not vram_arbiter.can_fit_model(est_mb):
-                self.state = ModelState.FAILED
-                raise MemoryError(f"Insufficient VRAM: requires {est_mb}MB with safety margin.")
+            # Verify and auto-tune GPU layers to stay within the 80% ceiling
+            if model.gpu_layers == -1:
+                calculated_layers = vram_arbiter.calculate_optimal_gpu_layers(
+                    file_size_bytes=model_path.stat().st_size,
+                    context_length=model.context_length,
+                    total_model_layers=28,
+                )
+                logger.info(
+                    f"Auto-tuning GPU layers: offloading {calculated_layers}/28 layers to GPU "
+                    f"to respect the {settings.MAX_GPU_USAGE_PERCENT}% VRAM ceiling."
+                )
+            else:
+                calculated_layers = model.gpu_layers
 
             self.state = ModelState.LOADING
             self.active_model = model
 
+            # Build llama-server launch command
             cmd = [
                 settings.LLAMA_SERVER_BIN,
                 "-m",
@@ -85,7 +93,7 @@ class ModelSupervisor:
                 "-c",
                 str(model.context_length),
                 "-ngl",
-                str(model.gpu_layers),
+                str(calculated_layers),
                 "--host",
                 settings.LLAMA_SERVER_HOST,
                 "--port",
@@ -94,11 +102,16 @@ class ModelSupervisor:
                 str(settings.LLAMA_PARALLEL_SLOTS),
             ]
 
+            # Multimodal projector flag for vision-language models
             if model.vision_supported and model.mmproj_path:
-                cmd.extend(["--mmproj", str(model.mmproj_path)])
+                mmproj_file = Path(model.mmproj_path)
+                if not mmproj_file.exists():
+                    self.state = ModelState.FAILED
+                    raise FileNotFoundError(f"mmproj file not found at: {model.mmproj_path}")
+                cmd.extend(["--mmproj", str(mmproj_file)])
 
             try:
-                logger.info(f"Spawning llama-server: {' '.join(cmd)}")
+                logger.info(f"Spawning llama-server process: {' '.join(cmd)}")
                 self.process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -106,18 +119,18 @@ class ModelSupervisor:
                     text=True,
                 )
 
-                # Wait for server /health readiness
-                await self._wait_for_ready(timeout_seconds=60)
+                # Wait for health endpoint readiness
+                await self._wait_for_ready(timeout_seconds=90)
                 self.state = ModelState.READY
                 self.last_active_at = datetime.now(UTC)
-                logger.info(f"Model {model.display_name} loaded and ready.")
+                logger.info(f"Model '{model.display_name}' is loaded and ready for inference.")
             except Exception as e:
                 self.state = ModelState.FAILED
                 await self._stop_process()
-                logger.error(f"Failed to start llama-server: {e}")
+                logger.error(f"Failed to start llama-server: {e}", exc_info=True)
                 raise
 
-    async def _wait_for_ready(self, timeout_seconds: int = 60) -> None:
+    async def _wait_for_ready(self, timeout_seconds: int = 90) -> None:
         async with httpx.AsyncClient() as client:
             for _ in range(timeout_seconds):
                 if self.process and self.process.poll() is not None:
@@ -135,10 +148,11 @@ class ModelSupervisor:
     async def unload_model(self) -> None:
         async with self.lock:
             if self.active_requests > 0:
-                raise RuntimeError("Cannot unload model with active requests")
+                raise RuntimeError("Cannot unload model with active requests in progress")
             await self._stop_process()
             self.state = ModelState.UNLOADED
             self.active_model = None
+            logger.info("Model successfully unloaded.")
 
     async def _stop_process(self) -> None:
         self.state = ModelState.UNLOADING
