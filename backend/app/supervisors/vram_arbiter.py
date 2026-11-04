@@ -67,23 +67,28 @@ class VRAMArbiter:
         self,
         file_size_bytes: int,
         context_length: int,
-        total_model_layers: int = 28,
+        total_model_layers: int = 36,
     ) -> int:
         """Calculates how many layers can fit strictly within the 80% VRAM budget."""
         status = self.get_vram_status()
-        available_mb = status["effective_free_mb"]
+        available_mb = status.get("effective_free_mb", 0)
 
-        kv_cache_mb = int((context_length / 1024) * 64)
+        # Context length footprint and runtime overhead
+        kv_cache_mb = int((max(512, context_length) / 1024) * 64)
         runtime_overhead_mb = 256
         usable_for_weights_mb = available_mb - (kv_cache_mb + runtime_overhead_mb)
 
         if usable_for_weights_mb <= 0:
-            return 0  # Run on CPU
+            return 0  # Offload to CPU if GPU budget is filled
 
         total_weights_mb = int(file_size_bytes / (1024 * 1024))
-        mb_per_layer = total_weights_mb / total_model_layers
+        if total_weights_mb <= 0 or total_model_layers <= 0:
+            return 0
 
-        # How many layers fit in usable VRAM?
+        mb_per_layer = total_weights_mb / float(total_model_layers)
+        if mb_per_layer <= 0:
+            return 0
+
         fit_layers = int(usable_for_weights_mb / mb_per_layer)
         return max(0, min(total_model_layers, fit_layers))
 

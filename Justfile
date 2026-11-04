@@ -93,7 +93,7 @@ test:
 
 # Start the FastAPI backend daemon with live reloading
 dev:
-    uv run --project backend uvicorn app.main:app --reload --app-dir backend --host 127.0.0.1 --port 8000
+    uv run --project backend uvicorn app.main:app --reload --reload-dir backend/app --app-dir backend --host 127.0.0.1 --port 8000
 
 # Start the Svelte desktop UI in local browser dev mode (http://localhost:5173)
 ui-dev:
@@ -116,7 +116,7 @@ migrate-up:
 # ------------------------------------------------------------------------------
 
 # Register a local GGUF model and multimodal projector into the workstation
-register-model model mmproj="" name="Qwen3-VL-7B" ctx="2048":
+register-model model mmproj="" name="Qwen3-VL-8B" ctx="2048":
     python3 scripts/register_local_model.py \
         --model "{{model}}" \
         --mmproj "{{mmproj}}" \
@@ -144,3 +144,12 @@ build-backend-sidecar:
 build-desktop: build-backend-sidecar
     cd apps/desktop && npm run build
     cd apps/desktop && npm run tauri build
+
+
+# Download precompiled CUDA llama-server binary
+install-llama:
+    python3 scripts/download_llama_server.py
+
+# Run both Backend and Desktop UI concurrently in one terminal
+workstation:
+    (trap 'kill 0' SIGINT; just dev & just ui-dev)

@@ -15,8 +15,18 @@ def register_model(
 ):
     model_file = Path(model_path).resolve()
     if not model_file.exists():
-        print(f"❌ Error: Model file not found at: {model_file}")
+        print(f"❌ Error: Model path does not exist: {model_file}")
         sys.exit(1)
+
+    # If a directory was provided, auto-detect the .gguf file inside it
+    if model_file.is_dir():
+        gguf_candidates = list(model_file.glob("*.gguf"))
+        if not gguf_candidates:
+            print(f"❌ Error: No .gguf files found inside folder: {model_file}")
+            sys.exit(1)
+        # Select the primary quant
+        model_file = gguf_candidates[0]
+        print(f"📁 Directory provided. Auto-selected: {model_file.name}")
 
     mmproj_file = Path(mmproj_path).resolve() if mmproj_path else None
     if mmproj_file and not mmproj_file.exists():
@@ -36,7 +46,8 @@ def register_model(
 
     headers = {"X-AIWA-Token": token}
 
-    with httpx.Client(timeout=10.0) as client:
+    # timeout 90 seconds
+    with httpx.Client(timeout=90.0) as client:
         # Check supervisor status and VRAM first
         vram_res = client.get(f"{API_BASE}/models/status", headers=headers)
         if vram_res.status_code == 200:

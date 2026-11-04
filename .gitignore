@@ -34,6 +34,8 @@ data/cache/*
 data/logs/*
 !data/**/.gitkeep
 
+services/llama-cpp/*
+
 # IDEs & System
 .vscode/
 .idea/

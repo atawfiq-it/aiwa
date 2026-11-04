@@ -47,19 +47,27 @@ class Settings(BaseSettings):
     COMFYUI_BASE_URL: str = "http://127.0.0.1:8188"
     TASK_WORKER_POLL_INTERVAL_SECONDS: float = 1.0
     MAX_GPU_USAGE_PERCENT: float = 90.0  # Max 90% of VRAM allowed for model allocation
+    LLAMA_SERVER_BIN: str = ""
 
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
 
     def model_post_init(self, __context) -> None:
-        # Guarantee local directories exist
+        # Existing directory creations...
         self.DATABASE_DIR.mkdir(parents=True, exist_ok=True)
         self.MODELS_DIR.mkdir(parents=True, exist_ok=True)
         self.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
         self.GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Set default SQLite URL if not provided
+        # Auto-detect local prebuilt binary if LLAMA_SERVER_BIN is unset
+        if not self.LLAMA_SERVER_BIN:
+            local_bin = self.BASE_DIR / "services" / "llama-cpp" / "llama-server"
+            if local_bin.exists():
+                object.__setattr__(self, "LLAMA_SERVER_BIN", str(local_bin.resolve()))
+            else:
+                object.__setattr__(self, "LLAMA_SERVER_BIN", "llama-server")
+
         if not self.DATABASE_URL:
             db_path = self.DATABASE_DIR / "aiwa.db"
             object.__setattr__(self, "DATABASE_URL", f"sqlite:///{db_path}")

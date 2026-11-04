@@ -235,11 +235,18 @@
           'X-AIWA-Token': token,
         },
         body: JSON.stringify({
-          conversation_id: currentConversationId,
-          knowledge_base_id: selectedKbId || null,
           messages: messages.slice(0, -1),
         }),
       });
+
+      // Catch HTTP 401 Unauthorized or 500 Server Errors immediately
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const msg = errData.detail || `Server error (HTTP ${response.status})`;
+        messages[assistantIndex].content = `⚠️ Error: ${msg}`;
+        messages = [...messages];
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -254,6 +261,12 @@
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6).trim());
+              // Handle error payload from SSE
+              if (data.error) {
+                messages[assistantIndex].content = `⚠️ ${data.error}`;
+                messages = [...messages];
+              }
+              // Append streamed token
               if (data.text) {
                 assistantAccumulated += data.text;
                 messages[assistantIndex].content += data.text;
@@ -264,12 +277,11 @@
         }
       }
 
-      // Voice Reply: Auto-synthesize and play speech via Kokoro
       if (voiceReplyEnabled && assistantAccumulated) {
         await playVoiceReply(assistantAccumulated);
       }
-    } catch {
-      messages[assistantIndex].content += '\n[Inference Error]';
+    } catch (err: any) {
+      messages[assistantIndex].content = `⚠️ Network Error: ${err.message || 'Failed connecting to backend'}`;
       messages = [...messages];
     } finally {
       isStreaming = false;
@@ -328,14 +340,24 @@
     } catch {}
   }
 
+  async function checkBackend() {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/v1/health');
+      if (res.ok) {
+        connectionStatus = 'Backend Connected';
+      } else {
+        connectionStatus = 'Backend Offline';
+      }
+    } catch {
+      connectionStatus = 'Backend Offline';
+    }
+  }
+
   onMount(() => {
     loadInitialData();
-    const interval = setInterval(() => {
-      if (token) {
-        if (currentTab === 'tasks') loadTasks();
-        if (currentTab === 'media') loadGallery();
-      }
-    }, 3000);
+    checkBackend();
+    // Poll every 3 seconds to keep UI in sync
+    const interval = setInterval(checkBackend, 3000);
     return () => clearInterval(interval);
   });
 </script>
