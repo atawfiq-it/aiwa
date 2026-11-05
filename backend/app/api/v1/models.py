@@ -1,12 +1,15 @@
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
+from app.core.config import Settings
 from app.core.security import verify_local_token
 from app.database.engine import get_db
 from app.database.models import ModelConfig
+from app.services.models.scanner import model_scanner
 from app.supervisors.model_supervisor import model_supervisor
 
 logger = logging.getLogger(__name__)
@@ -16,6 +19,68 @@ router = APIRouter(
     tags=["Models"],
     dependencies=[Depends(verify_local_token)],
 )
+
+
+class ScanRequest(BaseModel):
+    paths: list[str] = Field(
+        default_factory=list,
+        description="List of custom absolute paths to scan for GGUF models.",
+    )
+
+
+class RegisterScannedModelRequest(BaseModel):
+    display_name: str
+    file_path: str
+    mmproj_path: str | None = None
+    context_length: int = 4096
+    vision_supported: bool = False
+    is_default: bool = False
+
+
+@router.post("/scan")
+def scan_local_models(req: ScanRequest):
+    """Scans requested paths + default data/models directory for GGUF models."""
+    search_paths = list(req.paths)
+    default_path = str(Settings.MODELS_DIR.resolve())
+    if default_path not in search_paths:
+        search_paths.append(default_path)
+
+    models_found = model_scanner.scan_directories(search_paths)
+    return {
+        "scanned_paths": search_paths,
+        "total_found": len(models_found),
+        "models": models_found,
+    }
+
+
+@router.post("/register-scanned", response_model=ModelConfig)
+def register_scanned_model(
+    req: RegisterScannedModelRequest,
+    db: Session = Depends(get_db),
+):
+    """Registers a scanned model into SQLite configuration."""
+    model_path = Path(req.file_path)
+    if not model_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
+
+    # Check if already registered
+    existing = db.exec(select(ModelConfig).where(ModelConfig.file_path == req.file_path)).first()
+    if existing:
+        return existing
+
+    model = ModelConfig(
+        display_name=req.display_name,
+        file_path=str(model_path.resolve()),
+        context_length=req.context_length,
+        vision_supported=req.vision_supported,
+        mmproj_path=req.mmproj_path,
+        gpu_layers=-1,  # Auto-tuned dynamically by VRAM arbiter on load
+        is_default=req.is_default,
+    )
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+    return model
 
 
 class ModelRegisterRequest(BaseModel):

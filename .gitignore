@@ -1,49 +1,83 @@
-# Python & Environment
+# ==========================================
+# AIWA Workstation Strict Security Rules
+# ==========================================
+
+# 1. Ephemeral Authentication Tokens & Secrets
+data/.aiwa_session_token*
+.aiwa_session_token*
+*.env
+*.env.*
+*.local.env
+*.pem
+*.key
+
+# 2. SQLite Databases & Migrations Runtime Data
+data/database/*.db
+data/database/*.db-journal
+data/database/*.db-wal
+data/database/*.db-shm
+*.db
+*.sqlite
+*.sqlite3
+
+# 3. User Uploads, Documents & Extracted Artifacts
+data/uploads/*
+!data/uploads/.gitkeep
+
+# 4. Generated Media (Images, Audios, Transcripts)
+data/generated/*
+!data/generated/.gitkeep
+
+# 5. Embedded Vector Store & Caches
+data/vector_store/*
+!data/vector_store/.gitkeep
+data/cache/*
+!data/cache/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+
+# 6. Model Weights & Multimodal Projectors (All Drives/Folders)
+data/models/**/*.gguf
+data/models/**/*.bin
+data/models/**/*.safetensors
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.onnx
+
+# 7. Embedded External Services & Subprocesses
+services/llama-cpp/llama-server
+services/llama-cpp/src/
+services/llama-cpp/*.zip
+services/comfyui/app/
+services/comfyui/.venv/
+services/comfyui/models/checkpoints/*
+
+# 8. Python & Environment Artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .venv/
-env/
+backend/.venv/
 build/
 dist/
 *.egg-info/
-
-# uv & Tools
 .ruff_cache/
 .pytest_cache/
 .mypy_cache/
 .coverage
-htmlcov/
 
-# Tauri & Node (Desktop Shell)
+# 9. Desktop Shell & Node
 apps/desktop/node_modules/
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/binaries/
+apps/desktop/dist/
 
-# Local Application Data & Large Binaries (Crucial for AI/ML)
-data/database/*.db
-data/database/*.db-journal
-data/database/*.db-wal
-data/database/*.db-shm
-data/models/**/*.gguf
-data/models/**/*.bin
-data/uploads/*
-data/generated/*
-data/vector_store/*
-data/cache/*
-data/logs/*
-!data/**/.gitkeep
-
-services/llama-cpp/*
-services/comfyui/*
-services/audio/*
-services/ocr/*
-
-# IDEs & System
-.vscode/
+# 10. System & IDE
+.DS_Store
 .idea/
+.vscode/
 *.swp
 *.swo
-.DS_Store
-*.local.env
-.env
