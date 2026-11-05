@@ -3,8 +3,8 @@
 # ==========================================
 
 # 1. Ephemeral Authentication Tokens & Secrets
-data/.aiwa_session_token*
-.aiwa_session_token*
+data/.aiwa_session_token
+.aiwa_session_token
 *.env
 *.env.*
 *.local.env
