@@ -1,3 +1,5 @@
+import datetime
+import json
 import logging
 from pathlib import Path
 
@@ -8,7 +10,7 @@ from sqlmodel import Session, select
 from app.core.config import Settings
 from app.core.security import verify_local_token
 from app.database.engine import get_db
-from app.database.models import ModelConfig
+from app.database.models import AppSetting, ModelConfig
 from app.services.models.scanner import model_scanner
 from app.supervisors.model_supervisor import model_supervisor
 
@@ -19,6 +21,41 @@ router = APIRouter(
     tags=["Models"],
     dependencies=[Depends(verify_local_token)],
 )
+
+
+class DirectoryListRequest(BaseModel):
+    directories: list[str]
+
+
+@router.get("/directories")
+def get_model_directories(db: Session = Depends(get_db)):
+    """Retrieve saved model scan directories."""
+    record = db.get(AppSetting, "model_search_directories")
+    if record and record.value:
+        try:
+            return json.loads(record.value)
+        except Exception:
+            pass
+    # Return default models dir if none configured
+    return [str(Settings.MODELS_DIR.resolve())]
+
+
+@router.post("/directories")
+def save_model_directories(req: DirectoryListRequest, db: Session = Depends(get_db)):
+    """Save custom model scan directories."""
+    record = db.get(AppSetting, "model_search_directories")
+    clean_paths = [str(Path(p).resolve()) for p in req.directories if p.strip()]
+    json_val = json.dumps(clean_paths)
+
+    if not record:
+        record = AppSetting(key="model_search_directories", value=json_val)
+    else:
+        record.value = json_val
+        record.updated_at = datetime.now(datetime.UTC)
+
+    db.add(record)
+    db.commit()
+    return clean_paths
 
 
 class ScanRequest(BaseModel):

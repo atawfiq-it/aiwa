@@ -1,3 +1,4 @@
+<!-- apps/desktop/src/App.svelte -->
 <script lang="ts">
   import { onMount } from 'svelte';
 
@@ -8,53 +9,68 @@
   let token = '';
   let connectionStatus = 'Connecting...';
 
-  // Chat & Multimodal State
-  let messages: {
-    role: string;
-    content: string;
-    image_paths?: string[];
-  }[] = [];
+  // Model & Supervisor State
+  let registeredModels: any[] = [];
+  let activeModelId: string = '';
+  let selectedDropdownModelId: string = '';
+  let isSwitchingModel = false;
+  let supervisorStatus: any = null;
+
+  // Model Scanner State (Settings)
+  let customScanPaths: string = '';
+  let scannedModelsList: any[] = [];
+  let isScanning = false;
+
+  // Chat & Messaging State
+  let messages: { role: string; content: string; image_paths?: string[] }[] = [];
   let promptText = '';
   let isStreaming = false;
-  let currentConversationId: string | null = null;
-  let knowledgeBases: { id: string; name: string; description?: string; embedding_model: string }[] = [];
+  let attachedFiles: { name: string; path: string; type: string }[] = [];
+  let knowledgeBases: any[] = [];
   let selectedKbId: string = '';
 
-  // Push-to-Talk & Audio Playback
+  // Multimodal Voice & Audio State
   let isRecording = false;
   let mediaRecorder: MediaRecorder | null = null;
   let audioChunks: Blob[] = [];
   let voiceReplyEnabled = false;
-  let audioElement: HTMLAudioElement;
   let activeAudioUrl: string | null = null;
+  let audioElement: HTMLAudioElement;
 
-  // File Attachments (Images & PDFs)
-  let attachedFiles: { name: string; path: string; type: string }[] = [];
-
-  // Media Studio State
+  // Media Studio State (ComfyUI & Kokoro)
   let imagePrompt = '';
+  let imageNegativePrompt = 'ugly, blurry, distorted, bad anatomy';
+  let selectedCheckpoint = 'sd_xl_turbo_1.0_fp16.safetensors';
   let ttsText = '';
+  let selectedVoice = 'af_heart';
   let mediaGallery: any[] = [];
 
-  // Tasks & System State
+  // Task Queue State
   let tasks: any[] = [];
-  let supervisorStatus: any = null;
 
-  // --- Initialization & Health Check ---
+  // -------------------------------------------------------------
+  // Lifecycle & Health Initialization
+  // -------------------------------------------------------------
   async function loadInitialData() {
+    // Attempt Tauri native token handshake first
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const nativeToken = await invoke<string>('get_session_token');
       if (nativeToken) token = nativeToken;
     } catch {}
 
+    await checkBackend();
+
+    if (token) {
+      await refreshAllData();
+    }
+  }
+
+  async function checkBackend() {
     try {
       const res = await fetch('http://127.0.0.1:8000/api/v1/health');
       if (res.ok) {
         connectionStatus = 'Backend Connected';
-        if (token) {
-          refreshAllData();
-        }
       } else {
         connectionStatus = 'Backend Offline';
       }
@@ -63,54 +79,134 @@
     }
   }
 
-  function refreshAllData() {
-    loadKnowledgeBases();
-    loadTasks();
-    loadGallery();
-    loadSupervisor();
+  async function refreshAllData() {
+    await Promise.all([
+      loadSupervisorStatus(),
+      loadRegisteredModels(),
+      loadSavedDirectories(),
+      loadKnowledgeBases(),
+      loadTasks(),
+      loadGallery(),
+    ]);
   }
 
-  async function loadKnowledgeBases() {
-    if (!token) return;
-    try {
-      const res = await fetch(`${API_BASE}/knowledge-bases`, {
-        headers: { 'X-AIWA-Token': token },
-      });
-      if (res.ok) knowledgeBases = await res.json();
-    } catch {}
-  }
-
-  async function loadTasks() {
-    if (!token) return;
-    try {
-      const res = await fetch(`${API_BASE}/tasks`, {
-        headers: { 'X-AIWA-Token': token },
-      });
-      if (res.ok) tasks = await res.json();
-    } catch {}
-  }
-
-  async function loadGallery() {
-    if (!token) return;
-    try {
-      const res = await fetch(`${API_BASE}/media/gallery`, {
-        headers: { 'X-AIWA-Token': token },
-      });
-      if (res.ok) mediaGallery = await res.json();
-    } catch {}
-  }
-
-  async function loadSupervisor() {
-    if (!token) return;
+  // -------------------------------------------------------------
+  // Model Supervisor & Scanner Functions
+  // -------------------------------------------------------------
+  async function loadSupervisorStatus() {
     try {
       const res = await fetch(`${API_BASE}/models/status`, {
         headers: { 'X-AIWA-Token': token },
       });
-      if (res.ok) supervisorStatus = await res.json();
+      if (res.ok) {
+        supervisorStatus = await res.json();
+        activeModelId = supervisorStatus.active_model_id || '';
+        if (!selectedDropdownModelId && activeModelId) {
+          selectedDropdownModelId = activeModelId;
+        }
+      }
     } catch {}
   }
 
-  // --- Push-to-Talk (Microphone Recording) ---
+  async function loadRegisteredModels() {
+    try {
+      const res = await fetch(`${API_BASE}/models`, {
+        headers: { 'X-AIWA-Token': token },
+      });
+      if (res.ok) {
+        registeredModels = await res.json();
+      }
+    } catch {}
+  }
+
+  async function applyModelSwitch() {
+    if (!selectedDropdownModelId || selectedDropdownModelId === activeModelId || isSwitchingModel) return;
+
+    isSwitchingModel = true;
+    try {
+      const res = await fetch(`${API_BASE}/models/${selectedDropdownModelId}/load`, {
+        method: 'POST',
+        headers: { 'X-AIWA-Token': token },
+      });
+      if (res.ok) {
+        await loadSupervisorStatus();
+        alert('Model successfully loaded and ready for inference!');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed loading model: ${err.detail || 'Unknown error'}`);
+      }
+    } catch (e: any) {
+      alert(`Network error: ${e.message}`);
+    } finally {
+      isSwitchingModel = false;
+    }
+  }
+
+  async function loadSavedDirectories() {
+    try {
+      const res = await fetch(`${API_BASE}/models/directories`, {
+        headers: { 'X-AIWA-Token': token },
+      });
+      if (res.ok) {
+        const dirs = await res.json();
+        customScanPaths = dirs.join('\n');
+      }
+    } catch {}
+  }
+
+  async function triggerScan() {
+    isScanning = true;
+    const pathsArray = customScanPaths.split('\n').map((p) => p.trim()).filter(Boolean);
+
+    try {
+      await fetch(`${API_BASE}/models/directories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-AIWA-Token': token },
+        body: JSON.stringify({ directories: pathsArray }),
+      });
+
+      const res = await fetch(`${API_BASE}/models/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-AIWA-Token': token },
+        body: JSON.stringify({ paths: pathsArray }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        scannedModelsList = data.models;
+      }
+    } catch (e: any) {
+      alert(`Scan failed: ${e.message}`);
+    } finally {
+      isScanning = false;
+    }
+  }
+
+  async function registerScannedModel(item: any) {
+    try {
+      const res = await fetch(`${API_BASE}/models/register-scanned`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-AIWA-Token': token },
+        body: JSON.stringify({
+          display_name: item.display_name,
+          file_path: item.file_path,
+          mmproj_path: item.mmproj_path,
+          context_length: 4096,
+          vision_supported: item.vision_supported,
+          is_default: false,
+        }),
+      });
+      if (res.ok) {
+        await loadRegisteredModels();
+        alert(`Registered '${item.display_name}'!`);
+      }
+    } catch (e: any) {
+      alert(`Registration failed: ${e.message}`);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Push-to-Talk Audio & File Attachments
+  // -------------------------------------------------------------
   async function toggleRecording() {
     if (isRecording) {
       stopRecording();
@@ -124,21 +220,18 @@
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorder = new MediaRecorder(stream);
-
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunks.push(e.data);
       };
-
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         await sendAudioForTranscription(audioBlob);
         stream.getTracks().forEach((track) => track.stop());
       };
-
       mediaRecorder.start();
       isRecording = true;
-    } catch (err) {
-      alert('Microphone access denied or unavailable: ' + err);
+    } catch (err: any) {
+      alert(`Microphone access error: ${err.message}`);
     }
   }
 
@@ -151,8 +244,7 @@
 
   async function sendAudioForTranscription(blob: Blob) {
     const formData = new FormData();
-    formData.append('file', blob, 'recording.webm');
-
+    formData.append('file', blob, 'mic.webm');
     try {
       const res = await fetch(`${API_BASE}/media/audio/transcribe-direct`, {
         method: 'POST',
@@ -170,7 +262,6 @@
     }
   }
 
-  // --- File Uploads (Images & PDFs) ---
   async function handleFileUpload(event: Event) {
     const input = event.target as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
@@ -194,17 +285,18 @@
           ];
         }
       } catch (e) {
-        console.error('File upload error:', e);
+        console.error('Upload error:', e);
       }
     }
-    input.value = '';
   }
 
   function removeAttachment(index: number) {
     attachedFiles = attachedFiles.filter((_, i) => i !== index);
   }
 
-  // --- Chat Message Sending & Streaming ---
+  // -------------------------------------------------------------
+  // Chat Completion & Streaming Pipeline
+  // -------------------------------------------------------------
   async function sendMessage() {
     if ((!promptText.trim() && attachedFiles.length === 0) || isStreaming) return;
 
@@ -212,12 +304,7 @@
       .filter((f) => f.type.startsWith('image/'))
       .map((f) => f.path);
 
-    const userMessage = {
-      role: 'user',
-      content: promptText,
-      image_paths: currentImages,
-    };
-
+    const userMessage = { role: 'user', content: promptText, image_paths: currentImages };
     messages = [...messages, userMessage];
     promptText = '';
     attachedFiles = [];
@@ -235,11 +322,11 @@
           'X-AIWA-Token': token,
         },
         body: JSON.stringify({
+          knowledge_base_id: selectedKbId || null,
           messages: messages.slice(0, -1),
         }),
       });
 
-      // Catch HTTP 401 Unauthorized or 500 Server Errors immediately
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         const msg = errData.detail || `Server error (HTTP ${response.status})`;
@@ -261,12 +348,10 @@
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6).trim());
-              // Handle error payload from SSE
               if (data.error) {
                 messages[assistantIndex].content = `⚠️ ${data.error}`;
                 messages = [...messages];
               }
-              // Append streamed token
               if (data.text) {
                 assistantAccumulated += data.text;
                 messages[assistantIndex].content += data.text;
@@ -281,7 +366,7 @@
         await playVoiceReply(assistantAccumulated);
       }
     } catch (err: any) {
-      messages[assistantIndex].content = `⚠️ Network Error: ${err.message || 'Failed connecting to backend'}`;
+      messages[assistantIndex].content = `⚠️ Network Error: ${err.message || 'Connection failed'}`;
       messages = [...messages];
     } finally {
       isStreaming = false;
@@ -296,7 +381,7 @@
           'Content-Type': 'application/json',
           'X-AIWA-Token': token,
         },
-        body: JSON.stringify({ text: text.slice(0, 500) }),
+        body: JSON.stringify({ text: text.slice(0, 500), voice: selectedVoice }),
       });
 
       if (res.ok) {
@@ -313,16 +398,53 @@
     }
   }
 
-  // --- Media Studio Actions ---
+  // -------------------------------------------------------------
+  // Knowledge Base, Media Studio & Tasks
+  // -------------------------------------------------------------
+  async function loadKnowledgeBases() {
+    try {
+      const res = await fetch(`${API_BASE}/knowledge-bases`, {
+        headers: { 'X-AIWA-Token': token },
+      });
+      if (res.ok) knowledgeBases = await res.json();
+    } catch {}
+  }
+
+  async function loadTasks() {
+    try {
+      const res = await fetch(`${API_BASE}/tasks`, {
+        headers: { 'X-AIWA-Token': token },
+      });
+      if (res.ok) tasks = await res.json();
+    } catch {}
+  }
+
+  async function loadGallery() {
+    try {
+      const res = await fetch(`${API_BASE}/media/gallery`, {
+        headers: { 'X-AIWA-Token': token },
+      });
+      if (res.ok) mediaGallery = await res.json();
+    } catch {}
+  }
+
   async function triggerImageGen() {
     if (!imagePrompt.trim()) return;
     try {
       await fetch(`${API_BASE}/media/images/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-AIWA-Token': token },
-        body: JSON.stringify({ prompt: imagePrompt }),
+        body: JSON.stringify({
+          prompt: imagePrompt,
+          negative_prompt: imageNegativePrompt,
+          checkpoint: selectedCheckpoint,
+          width: 512,
+          height: 512,
+          steps: 4,
+        }),
       });
       imagePrompt = '';
+      currentTab = 'tasks';
       loadTasks();
     } catch {}
   }
@@ -333,38 +455,37 @@
       await fetch(`${API_BASE}/media/audio/speech`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-AIWA-Token': token },
-        body: JSON.stringify({ text: ttsText }),
+        body: JSON.stringify({ text: ttsText, voice: selectedVoice }),
       });
       ttsText = '';
+      currentTab = 'tasks';
       loadTasks();
     } catch {}
   }
 
-  async function checkBackend() {
-    try {
-      const res = await fetch('http://127.0.0.1:8000/api/v1/health');
-      if (res.ok) {
-        connectionStatus = 'Backend Connected';
-      } else {
-        connectionStatus = 'Backend Offline';
-      }
-    } catch {
-      connectionStatus = 'Backend Offline';
-    }
-  }
-
+  // -------------------------------------------------------------
+  // Polling Loop
+  // -------------------------------------------------------------
   onMount(() => {
     loadInitialData();
-    checkBackend();
-    // Poll every 3 seconds to keep UI in sync
-    const interval = setInterval(checkBackend, 3000);
+    const interval = setInterval(() => {
+      checkBackend();
+      if (token) {
+        if (currentTab === 'tasks') loadTasks();
+        if (currentTab === 'media') loadGallery();
+        loadSupervisorStatus();
+      }
+    }, 3500);
     return () => clearInterval(interval);
   });
 </script>
 
-<div class="flex h-screen bg-slate-950 text-slate-100 font-sans">
-  <!-- Left-Side Navigation Bar -->
-  <nav class="w-16 bg-slate-900 border-r border-slate-800 flex flex-col items-center py-4 space-y-6 select-none">
+<!-- Audio Tag for Voice Replies -->
+<audio bind:this={audioElement} class="hidden"></audio>
+
+<div class="flex h-screen bg-slate-950 text-slate-100 font-sans select-none overflow-hidden">
+  <!-- Left Navigation Icon Bar -->
+  <nav class="w-16 bg-slate-900 border-r border-slate-800 flex flex-col items-center py-4 space-y-6 z-20">
     <div class="h-10 w-10 bg-indigo-600 rounded-xl flex items-center justify-center font-bold text-lg text-white shadow-lg">
       A
     </div>
@@ -403,54 +524,81 @@
       </button>
 
       <button
-        on:click={() => { currentTab = 'settings'; loadSupervisor(); }}
+        on:click={() => { currentTab = 'settings'; loadSupervisorStatus(); loadSavedDirectories(); }}
         class={`p-3 rounded-lg flex justify-center transition ${currentTab === 'settings' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
-        title="Settings & System"
+        title="Settings & Model Scanner"
       >
         ⚙️
       </button>
     </div>
   </nav>
 
-  <!-- Main View Area -->
+  <!-- Main Viewports -->
   <div class="flex-1 flex overflow-hidden">
     {#if currentTab === 'chat'}
-      <!-- AI Chat Module -->
-      <div class="flex-1 flex flex-col bg-slate-900 justify-between">
-        <!-- Chat Top Bar -->
-        <header class="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/60">
+      <!-- ---------------- CHAT VIEWPORT ---------------- -->
+      <div class="flex-1 flex flex-col bg-slate-900">
+        <!-- Top Chat Header -->
+        <header class="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/80">
           <div class="flex items-center gap-3">
-            <span class="font-bold text-sm text-indigo-300">Omni-Chat</span>
-            <span class={`h-2 w-2 rounded-full ${connectionStatus === 'Backend Connected' ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-            <span class="text-xs text-slate-400">{connectionStatus}</span>
+            <span class="font-bold text-indigo-400 text-sm">AIWA Chat</span>
+            <span class={`h-2.5 w-2.5 rounded-full ${supervisorStatus?.state === 'Ready' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></span>
+            <span class="text-xs text-slate-400">
+              {supervisorStatus?.state === 'Ready' ? (supervisorStatus.active_model_name || 'Ready') : 'Model Loading/Unloaded'}
+            </span>
           </div>
 
-          <div class="flex items-center gap-5">
-            <!-- Knowledge Base Selector -->
-            <div class="flex items-center gap-2">
-              <label for="kb-select" class="text-xs text-slate-400">Knowledge Base:</label>
+          <!-- Controls: Model Switcher & Knowledge Base Selector -->
+          <div class="flex items-center gap-3">
+            <!-- RAG Selector -->
+            <div class="flex items-center gap-1.5">
+              <label for="kb-select" class="text-xs text-slate-400">KB:</label>
               <select
                 id="kb-select"
                 bind:value={selectedKbId}
-                class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
+                class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2 py-1.5 focus:outline-none focus:border-indigo-500"
               >
-                <option value="">None (General Knowledge)</option>
+                <option value="">None (Standard)</option>
                 {#each knowledgeBases as kb}
                   <option value={kb.id}>{kb.name}</option>
                 {/each}
               </select>
             </div>
 
+            <!-- Model Switcher Dropdown & Apply Button -->
+            <div class="flex items-center gap-1.5">
+              <label for="model-select" class="text-xs text-slate-400">Model:</label>
+              <select
+                id="model-select"
+                bind:value={selectedDropdownModelId}
+                class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
+              >
+                {#each registeredModels as m}
+                  <option value={m.id}>
+                    {m.display_name} {m.vision_supported ? '👁️' : ''} {m.id === activeModelId ? '●' : ''}
+                  </option>
+                {/each}
+              </select>
+
+              {#if selectedDropdownModelId && selectedDropdownModelId !== activeModelId}
+                <button
+                  on:click={applyModelSwitch}
+                  disabled={isSwitchingModel}
+                  class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold rounded transition animate-pulse"
+                >
+                  {isSwitchingModel ? 'Loading...' : 'Apply Switch'}
+                </button>
+              {/if}
+            </div>
+
             <!-- Voice Reply Toggle -->
-            <div class="flex items-center gap-2 border-l border-slate-800 pl-4">
-              <label for="voice-toggle" class="text-xs text-slate-400 cursor-pointer select-none">
-                Voice Reply (Kokoro)
-              </label>
+            <div class="flex items-center gap-1.5 border-l border-slate-800 pl-3">
+              <label for="voice-toggle" class="text-xs text-slate-400 cursor-pointer select-none">Voice</label>
               <input
                 id="voice-toggle"
                 type="checkbox"
                 bind:checked={voiceReplyEnabled}
-                class="h-4 w-4 accent-indigo-600 rounded cursor-pointer"
+                class="h-3.5 w-3.5 accent-indigo-600 rounded cursor-pointer"
               />
             </div>
           </div>
@@ -459,32 +607,28 @@
         <!-- Message History -->
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           {#if messages.length === 0}
-            <div class="h-full flex flex-col items-center justify-center text-slate-500">
-              <p class="text-lg font-medium">Multimodal AI Workspace Ready</p>
-              <p class="text-xs mt-1">Speak into the mic, drop images for vision analysis, or type your query.</p>
+            <div class="h-full flex flex-col items-center justify-center text-slate-500 space-y-2">
+              <p class="text-base font-medium text-slate-400">Multimodal AI Workspace Ready</p>
+              <p class="text-xs text-slate-500">Dictate via microphone, attach images for vision analysis, or type your query.</p>
             </div>
           {:else}
             {#each messages as msg}
               <div class={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div class={`max-w-2xl px-4 py-3 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
+                <div class={`max-w-2xl px-4 py-3 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
                   {#if msg.image_paths && msg.image_paths.length > 0}
                     <div class="mb-2 text-xs text-indigo-200 flex items-center gap-1 font-mono">
-                      🖼️ Attached: {msg.image_paths.length} image(s)
+                      🖼️ Attached {msg.image_paths.length} image(s)
                     </div>
                   {/if}
-                  <p class="whitespace-pre-wrap">{msg.content}</p>
+                  <p class="whitespace-pre-wrap select-text">{msg.content}</p>
                 </div>
               </div>
             {/each}
           {/if}
         </div>
 
-        <!-- Hidden Audio Player for Spoken Voice Replies -->
-        <audio bind:this={audioElement} class="hidden"></audio>
-
-        <!-- Unified Multimodal Input Bar -->
-        <div class="p-4 border-t border-slate-800 bg-slate-950">
-          <!-- Attachment Pills -->
+        <!-- Multimodal Input Bar -->
+        <div class="p-4 border-t border-slate-800 bg-slate-900/90">
           {#if attachedFiles.length > 0}
             <div class="flex flex-wrap gap-2 mb-2">
               {#each attachedFiles as file, index}
@@ -498,9 +642,9 @@
           {/if}
 
           <div class="flex items-center gap-2">
-            <!-- Attachment Button (Images & PDFs) -->
+            <!-- File Picker -->
             <label
-              class="p-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg cursor-pointer transition flex items-center justify-center"
+              class="p-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg cursor-pointer transition"
               title="Attach Image or PDF"
             >
               📎
@@ -513,7 +657,7 @@
               />
             </label>
 
-            <!-- Push-to-Talk Mic Button -->
+            <!-- Push-to-Talk Mic -->
             <button
               type="button"
               on:click={toggleRecording}
@@ -522,19 +666,19 @@
                   ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
                   : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
               }`}
-              title={isRecording ? 'Click to Stop Recording' : 'Push-to-Talk (Microphone)'}
+              title={isRecording ? 'Click to Stop Recording' : 'Push-to-Talk'}
             >
               🎤
             </button>
 
-            <!-- Prompt Input -->
+            <!-- Main Input -->
             <input
               type="text"
               bind:value={promptText}
               on:keydown={(e) => e.key === 'Enter' && sendMessage()}
               placeholder={isRecording ? 'Listening to voice...' : 'Ask question, analyze image, or speak...'}
               disabled={isStreaming}
-              class="flex-1 bg-slate-800 text-slate-100 rounded-lg px-4 py-2.5 text-sm border border-slate-700 focus:outline-none focus:border-indigo-500"
+              class="flex-1 bg-slate-800 text-slate-100 rounded-lg px-4 py-2.5 text-sm border border-slate-700 focus:outline-none focus:border-indigo-500 select-text"
             />
 
             <!-- Send Button -->
@@ -550,81 +694,142 @@
       </div>
 
     {:else if currentTab === 'knowledge'}
-      <!-- Knowledge Base Module -->
+      <!-- ---------------- KNOWLEDGE BASE VIEWPORT ---------------- -->
       <div class="flex-1 p-8 overflow-y-auto space-y-6">
-        <h2 class="text-xl font-bold">Knowledge Bases (LanceDB RAG)</h2>
-        <div class="grid grid-cols-3 gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-slate-100">Knowledge Bases (LanceDB RAG)</h2>
+          <p class="text-xs text-slate-400 mt-1">Embedded vector search running ONNX embeddings on CPU.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           {#each knowledgeBases as kb}
-            <div class="bg-slate-900 border border-slate-800 rounded-lg p-5">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2">
               <h3 class="font-bold text-indigo-400">{kb.name}</h3>
-              <p class="text-xs text-slate-400 mt-1">{kb.description || 'No description'}</p>
-              <div class="mt-4 text-xs text-slate-500">Model: {kb.embedding_model}</div>
+              <p class="text-xs text-slate-400">{kb.description || 'No description provided.'}</p>
+              <div class="text-[11px] font-mono text-slate-500 pt-2 border-t border-slate-800">Model: {kb.embedding_model}</div>
             </div>
           {/each}
         </div>
       </div>
 
     {:else if currentTab === 'media'}
-      <!-- Media Studio Module -->
-      <div class="flex-1 p-8 overflow-y-auto space-y-8">
+      <!-- ---------------- MEDIA STUDIO VIEWPORT ---------------- -->
+      <div class="flex-1 p-8 overflow-y-auto space-y-8 max-w-4xl">
         <div>
-          <h2 class="text-xl font-bold mb-4">Image Studio (ComfyUI)</h2>
-          <div class="flex gap-3 max-w-2xl">
-            <input
-              type="text"
-              bind:value={imagePrompt}
-              placeholder="Describe image to generate..."
-              class="flex-1 bg-slate-900 border border-slate-800 rounded px-4 py-2 text-sm"
-            />
+          <h2 class="text-xl font-bold text-slate-100">Media Studio</h2>
+          <p class="text-xs text-slate-400 mt-1">Image generation via ComfyUI and voice synthesis via Kokoro.</p>
+        </div>
+
+        <!-- ComfyUI Image Generation -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
+          <h3 class="text-sm font-bold text-indigo-400">🎨 Image Generator (ComfyUI)</h3>
+          <div class="space-y-3">
+            <div>
+              <label for="img-prompt-input" class="text-xs text-slate-400 block mb-1">Prompt:</label>
+              <input
+                id="img-prompt-input"
+                type="text"
+                bind:value={imagePrompt}
+                placeholder="A futuristic cybernetic metropolis in neon rain..."
+                class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-xs focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label for="img-neg-input" class="text-xs text-slate-400 block mb-1">Negative Prompt:</label>
+                <input
+                  id="img-neg-input"
+                  type="text"
+                  bind:value={imageNegativePrompt}
+                  class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label for="checkpoint-select" class="text-xs text-slate-400 block mb-1">Checkpoint:</label>
+                <select
+                  id="checkpoint-select"
+                  bind:value={selectedCheckpoint}
+                  class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none"
+                >
+                  <option value="sd_xl_turbo_1.0_fp16.safetensors">SDXL-Turbo (Fast 4-step)</option>
+                  <option value="DreamShaperXL_Lightning.safetensors">DreamShaper XL Lightning</option>
+                  <option value="v1-5-pruned-emaonly.safetensors">SD 1.5 Pruned</option>
+                </select>
+              </div>
+            </div>
+
             <button
               on:click={triggerImageGen}
-              class="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded text-sm font-medium"
+              disabled={!imagePrompt.trim()}
+              class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold rounded-lg transition"
             >
-              Generate Image
+              Generate Image (Safe VRAM Swap)
             </button>
           </div>
         </div>
 
-        <div>
-          <h2 class="text-xl font-bold mb-4">Audio Studio (Kokoro TTS)</h2>
-          <div class="flex gap-3 max-w-2xl">
-            <input
-              type="text"
-              bind:value={ttsText}
-              placeholder="Text to speak..."
-              class="flex-1 bg-slate-900 border border-slate-800 rounded px-4 py-2 text-sm"
-            />
-            <button
-              on:click={triggerTTS}
-              class="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded text-sm font-medium"
-            >
-              Generate Speech
-            </button>
+        <!-- Kokoro Audio Synthesis -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
+          <h3 class="text-sm font-bold text-indigo-400">🔊 Text-to-Speech (Kokoro)</h3>
+          <div class="space-y-3">
+            <div>
+              <label for="tts-text-input" class="text-xs text-slate-400 block mb-1">Text:</label>
+              <textarea
+                id="tts-text-input"
+                rows="2"
+                bind:value={ttsText}
+                placeholder="Enter text to synthesize into spoken audio..."
+                class="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-xs focus:outline-none focus:border-indigo-500"
+              ></textarea>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <select
+                bind:value={selectedVoice}
+                class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none"
+              >
+                <option value="af_heart">Heart (US Warm Female)</option>
+                <option value="am_adam">Adam (US Deep Male)</option>
+                <option value="bf_emma">Emma (UK Professional Female)</option>
+              </select>
+
+              <button
+                on:click={triggerTTS}
+                disabled={!ttsText.trim()}
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold rounded-lg transition"
+              >
+                Synthesize Speech
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
     {:else if currentTab === 'tasks'}
-      <!-- Task Dashboard Module -->
+      <!-- ---------------- TASK DASHBOARD VIEWPORT ---------------- -->
       <div class="flex-1 p-8 overflow-y-auto">
-        <h2 class="text-xl font-bold mb-6">Task Queue Operations</h2>
+        <h2 class="text-xl font-bold mb-6 text-slate-100">Task Queue Operations</h2>
         <table class="w-full text-left text-sm border-collapse">
           <thead>
             <tr class="border-b border-slate-800 text-slate-400 text-xs">
-              <th class="py-2">Task Type</th>
-              <th class="py-2">Status</th>
-              <th class="py-2">Created At</th>
+              <th class="py-2.5">Task Type</th>
+              <th class="py-2.5">Status</th>
+              <th class="py-2.5">Progress</th>
+              <th class="py-2.5">Created At</th>
             </tr>
           </thead>
           <tbody>
             {#each tasks as t}
-              <tr class="border-b border-slate-800/50">
+              <tr class="border-b border-slate-800/60 hover:bg-slate-900/50">
                 <td class="py-3 font-mono text-xs text-indigo-300">{t.task_type}</td>
                 <td class="py-3">
-                  <span class={`px-2 py-0.5 rounded text-xs ${t.status === 'completed' ? 'bg-emerald-950 text-emerald-400' : t.status === 'running' ? 'bg-amber-950 text-amber-400' : 'bg-slate-800 text-slate-300'}`}>
+                  <span class={`px-2 py-0.5 rounded text-[11px] font-semibold ${t.status === 'completed' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : t.status === 'running' ? 'bg-amber-950 text-amber-400 border border-amber-800 animate-pulse' : 'bg-slate-800 text-slate-300'}`}>
                     {t.status}
                   </span>
                 </td>
+                <td class="py-3 text-xs text-slate-400">{t.progress_percent}%</td>
                 <td class="py-3 text-xs text-slate-500">{new Date(t.created_at).toLocaleTimeString()}</td>
               </tr>
             {/each}
@@ -633,31 +838,98 @@
       </div>
 
     {:else if currentTab === 'settings'}
-      <!-- Settings & Hardware Module -->
-      <div class="flex-1 p-8 overflow-y-auto max-w-2xl space-y-6">
-        <h2 class="text-xl font-bold">System & Settings</h2>
-
-        <div class="bg-slate-900 p-5 rounded-lg border border-slate-800 space-y-3">
-          <h3 class="text-sm font-semibold text-slate-300">Authentication Token</h3>
-          <input
-            type="password"
-            bind:value={token}
-            on:input={refreshAllData}
-            placeholder="Paste session token..."
-            class="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
-          />
+      <!-- ---------------- SETTINGS & MODEL SCANNER VIEWPORT ---------------- -->
+      <div class="flex-1 p-8 overflow-y-auto space-y-8 max-w-4xl">
+        <div>
+          <h2 class="text-xl font-bold text-slate-100">Workstation Settings & Model Catalog</h2>
+          <p class="text-xs text-slate-400 mt-1">Configure multi-drive search folders, observe VRAM arbitration, and manage credentials.</p>
         </div>
 
+        <!-- Hardware & VRAM Status -->
         {#if supervisorStatus}
-          <div class="bg-slate-900 p-5 rounded-lg border border-slate-800 space-y-3">
-            <h3 class="text-sm font-semibold text-slate-300">Model Supervisor & VRAM</h3>
-            <div class="text-xs space-y-1 font-mono text-slate-400">
-              <p>Model State: <span class="text-indigo-400">{supervisorStatus.state}</span></p>
-              <p>Active Model: {supervisorStatus.active_model_name || 'None'}</p>
-              <p>VRAM Free: {supervisorStatus.vram?.free_mb} MB / {supervisorStatus.vram?.total_mb} MB</p>
+          <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl space-y-2">
+            <h3 class="text-sm font-semibold text-slate-300">GPU Resource Arbiter (80% Safety Ceiling)</h3>
+            <div class="grid grid-cols-3 gap-4 pt-2 font-mono text-xs">
+              <div class="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50">
+                <span class="text-slate-500 block text-[10px]">TOTAL VRAM</span>
+                <span class="text-slate-200 text-sm font-bold">{supervisorStatus.vram?.total_mb} MB</span>
+              </div>
+              <div class="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50">
+                <span class="text-slate-500 block text-[10px]">80% CEILING BUDGET</span>
+                <span class="text-indigo-400 text-sm font-bold">{supervisorStatus.vram?.allowed_ceiling_mb} MB</span>
+              </div>
+              <div class="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50">
+                <span class="text-slate-500 block text-[10px]">USABLE FREE VRAM</span>
+                <span class="text-emerald-400 text-sm font-bold">{supervisorStatus.vram?.effective_free_mb} MB</span>
+              </div>
             </div>
           </div>
         {/if}
+
+        <!-- Multi-Directory GGUF Scanner -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
+          <label for="custom-dirs-input" class="text-sm font-semibold text-slate-300 block">Model Search Directories (one per line):</label>
+          <textarea
+            id="custom-dirs-input"
+            rows="3"
+            bind:value={customScanPaths}
+            placeholder="/run/media/alpha/.../models&#10;/home/.../weights"
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+          ></textarea>
+
+          <button
+            on:click={triggerScan}
+            disabled={isScanning}
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold rounded-lg transition"
+          >
+            {isScanning ? 'Scanning Drives...' : '🔍 Scan Directories for GGUF Models'}
+          </button>
+        </div>
+
+        <!-- Discovered Models List -->
+        {#if scannedModelsList.length > 0}
+          <div class="space-y-3">
+            <h3 class="text-sm font-semibold text-slate-300">Discovered Models ({scannedModelsList.length}):</h3>
+            <div class="grid grid-cols-1 gap-2.5">
+              {#each scannedModelsList as model}
+                <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span class="font-bold text-sm text-slate-200">{model.display_name}</span>
+                      {#if model.vision_supported}
+                        <span class="px-2 py-0.5 bg-indigo-950 border border-indigo-700 text-indigo-300 rounded text-[10px] font-semibold">👁️ Vision Ready</span>
+                      {/if}
+                      {#if model.quantization}
+                        <span class="px-2 py-0.5 bg-slate-800 border border-slate-700 text-slate-300 rounded text-[10px] font-mono">{model.quantization}</span>
+                      {/if}
+                    </div>
+                    <p class="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-xl">{model.file_path}</p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Size: {model.file_size_gb} GB</p>
+                  </div>
+
+                  <button
+                    on:click={() => registerScannedModel(model)}
+                    class="px-3.5 py-1.5 bg-slate-800 hover:bg-indigo-600 border border-slate-700 hover:border-indigo-500 text-xs font-medium rounded-lg transition"
+                  >
+                    + Register Model
+                  </button>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Session Token Storage -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-3">
+          <label for="token-storage-input" class="text-sm font-semibold text-slate-300 block">Session Token (data/.aiwa_session_token)</label>
+          <input
+            id="token-storage-input"
+            type="password"
+            bind:value={token}
+            placeholder="Paste session token..."
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+          />
+        </div>
       </div>
     {/if}
   </div>
