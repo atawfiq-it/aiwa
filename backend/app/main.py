@@ -20,6 +20,7 @@ from app.core.security import cleanup_session_token, generate_session_token, ver
 from app.database.engine import engine, run_migrations
 from app.database.models import ModelConfig
 from app.services.tasks.queue import task_queue
+from app.supervisors import comfyui_supervisor
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
 
@@ -52,9 +53,13 @@ async def lifespan(app: FastAPI):
         f"\n[AIWA] Local daemon ready. Session Token: {token[:8]}... "
         f"(written to {settings.TOKEN_FILE_PATH})\n"
     )
+
+    # lifespan shutdown
     yield
     await task_queue.stop_worker()
     await model_supervisor.unload_model()
+    await comfyui_supervisor.stop()
+
     cleanup_session_token()
 
 

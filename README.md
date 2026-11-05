@@ -39,4 +39,4 @@ python3 scripts/register_local_model.py \
   --model "/path/to/model.gguf" \
   --mmproj "/path/to/mmproj.gguf" \
   --name "Qwen2.5-VL-7B" \
-  --ctx 2048
+  --ctx 4096

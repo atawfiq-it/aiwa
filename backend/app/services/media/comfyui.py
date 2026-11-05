@@ -146,24 +146,52 @@ class ComfyUIAdapter:
 comfyui_adapter = ComfyUIAdapter()
 
 
+# In backend/app/services/media/comfyui.py:
+
+
 @register_task_handler("image_generation")
 async def handle_image_generation(task: Task, db: Session) -> dict[str, Any]:
-    """Worker task handler for ComfyUI image rendering."""
+    """Worker task handler with Dynamic VRAM Swap Interlock."""
+    from app.supervisors.comfyui_supervisor import comfyui_supervisor
+    from app.supervisors.model_supervisor import model_supervisor
+
     params = json.loads(task.parameters)
     prompt = params.get("prompt", "")
-    negative_prompt = params.get("negative_prompt", "ugly, blurry")
+    negative_prompt = params.get("negative_prompt", "ugly, blurry, bad anatomy")
+    # checkpoint = params.get("checkpoint", "dreamshaper_8.safetensors")
+    steps = params.get("steps", 4)
     width = params.get("width", 512)
     height = params.get("height", 512)
-    steps = params.get("steps", 20)
 
-    result = await comfyui_adapter.execute_workflow(
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        width=width,
-        height=height,
-        steps=steps,
-    )
+    # 1. Acquire supervisor lock to avoid simultaneous LLM inference
+    async with model_supervisor.lock:
+        active_llm = model_supervisor.active_model
+        if active_llm and model_supervisor.process:
+            logger.info("🔄 VRAM Interlock: Temporarily yielding GPU memory from LLM to ComfyUI...")
+            await model_supervisor._stop_process()
 
+        try:
+            # 2. Ensure embedded ComfyUI is up
+            await comfyui_supervisor.ensure_running()
+
+            # 3. Execute diffusion workflow
+            result = await comfyui_adapter.execute_workflow(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                steps=steps,
+            )
+        finally:
+            # 4. Restore LLM back to GPU
+            if active_llm:
+                logger.info(f"🔄 VRAM Interlock: Restoring '{active_llm.display_name}' to GPU...")
+                try:
+                    await model_supervisor.load_model(active_llm)
+                except Exception as e:
+                    logger.error(f"Failed restoring LLM after image generation: {e}")
+
+    # 5. Record generated artifact in database
     gen_file = GeneratedFile(
         task_id=task.id,
         file_type="image",

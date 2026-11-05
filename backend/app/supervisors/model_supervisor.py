@@ -97,7 +97,7 @@ class ModelSupervisor:
 
             server_bin = Path(settings.LLAMA_SERVER_BIN).resolve()
             cmd = [
-                str(server_bin),
+                settings.LLAMA_SERVER_BIN,
                 "-m",
                 str(model_path),
                 "-c",
@@ -110,6 +110,8 @@ class ModelSupervisor:
                 str(settings.LLAMA_SERVER_PORT),
                 "--parallel",
                 str(settings.LLAMA_PARALLEL_SLOTS),
+                "--media-path",
+                str(settings.UPLOADS_DIR.resolve()),
             ]
 
             # Fix for custom/experimental architecture tags (qwen3 -> qwen2)

@@ -116,7 +116,7 @@ migrate-up:
 # ------------------------------------------------------------------------------
 
 # Register a local GGUF model and multimodal projector into the workstation
-register-model model mmproj="" name="Qwen3-VL-8B" ctx="2048":
+register-model model mmproj="" name="Qwen3-VL-8B" ctx="4096":
     python3 scripts/register_local_model.py \
         --model "{{model}}" \
         --mmproj "{{mmproj}}" \
@@ -153,3 +153,7 @@ install-llama:
 # Run both Backend and Desktop UI concurrently in one terminal
 workstation:
     (trap 'kill 0' SIGINT; just dev & just ui-dev)
+
+# Provision embedded ComfyUI and link your existing checkpoints
+install-comfyui checkpoints="":
+    python3 scripts/setup_comfyui.py --checkpoints "{{checkpoints}}"

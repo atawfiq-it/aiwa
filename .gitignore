@@ -35,6 +35,9 @@ data/logs/*
 !data/**/.gitkeep
 
 services/llama-cpp/*
+services/comfyui/*
+services/audio/*
+services/ocr/*
 
 # IDEs & System
 .vscode/

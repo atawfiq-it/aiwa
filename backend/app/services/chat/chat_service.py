@@ -1,9 +1,13 @@
+import base64
+import io
 import json
+import mimetypes
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 import httpx
+from PIL import Image
 from sqlmodel import Session
 from sse_starlette.sse import ServerSentEvent
 
@@ -14,13 +18,37 @@ from app.services.embeddings.rag_service import rag_service
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
 
+def file_to_data_url(file_path: str, max_dimension: int = 1024) -> str:
+    """Reads, optionally resizes, and converts image to base64 Data URL."""
+    path = Path(file_path).resolve()
+    mime_type, _ = mimetypes.guess_type(path)
+    if not mime_type:
+        mime_type = "image/jpeg"
+
+    # Resize image if dimensions exceed max_dimension to minimize visual patch tokens
+    try:
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            if max(img.size) > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG", quality=85)
+            encoded = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            return f"data:image/jpeg;base64,{encoded}"
+    except Exception:
+        # Fallback to raw file read if Pillow fails or not an image
+        with open(path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded}"
+
+
 def format_messages_for_llm(
     messages: list[ChatMessage],
     knowledge_base_id: str | None = None,
 ) -> list[dict[str, Any]]:
     formatted = []
 
-    # If RAG is enabled, retrieve context using the latest user message
+    # Inject RAG context into the last user query if KB is active
     rag_context = ""
     if knowledge_base_id and messages:
         last_user_msg = next((m.content for m in reversed(messages) if m.role == "user"), None)
@@ -36,19 +64,20 @@ def format_messages_for_llm(
 
     for i, msg in enumerate(messages):
         content_text = msg.content
-        # Append RAG context to the last user message
         if i == len(messages) - 1 and msg.role == "user" and rag_context:
             content_text = f"{content_text}\n{rag_context}"
 
         if not msg.image_paths:
             formatted.append({"role": msg.role, "content": content_text})
         else:
+            # Multi-part content with Base64 data URLs
             parts: list[dict[str, Any]] = [{"type": "text", "text": content_text}]
             for img_path in msg.image_paths:
+                data_url = file_to_data_url(img_path)
                 parts.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"file://{Path(img_path).resolve()}"},
+                        "image_url": {"url": data_url},
                     }
                 )
             formatted.append({"role": msg.role, "content": parts})
