@@ -24,6 +24,10 @@
   let activeAudioUrl: string | null = null;
   let audioElement: HTMLAudioElement;
 
+  let characters: any[] = [];
+  let selectedCharacterId: string = '';
+  let imageGenMode: 'none' | 'probable' | 'definitely' = 'none';
+
   // Models & VRAM Supervisor
   let registeredModels: any[] = [];
   let activeModelId: string = '';
@@ -44,6 +48,18 @@
   let ttsText = '';
   let tasks: any[] = [];
 
+  async function loadCharacters() {
+    try {
+      const res = await fetch(`${API_BASE}/characters`, { headers: { 'X-AIWA-Token': token } });
+      if (res.ok) {
+        characters = await res.json();
+        if (characters.length > 0 && !selectedCharacterId) {
+          selectedCharacterId = characters[0].id;
+        }
+      }
+    } catch {}
+  }
+
   // ==========================================
   // Lifecycle & Initialization
   // ==========================================
@@ -58,6 +74,7 @@
     if (token) {
       await refreshAllData();
     }
+    await loadCharacters();
   }
 
   async function checkBackend() {
@@ -294,7 +311,8 @@
         },
         body: JSON.stringify({
           conversation_id: currentConversationId,
-          knowledge_base_id: selectedKbId || null,
+          character_id: selectedCharacterId || null,
+          image_gen_mode: imageGenMode,
           messages: messages.slice(0, -1),
         }),
       });
@@ -652,6 +670,31 @@
                 {isSwitchingModel ? 'Loading...' : 'Apply Switch'}
               </button>
             {/if}
+          </div>
+
+          <div class="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
+            <span class="text-xs text-slate-400">Persona:</span>
+            <select
+              bind:value={selectedCharacterId}
+              class="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
+            >
+              {#each characters as char}
+                <option value={char.id}>{char.avatar_emoji} {char.name}</option>
+              {/each}
+            </select>
+          </div>
+
+          <!-- Image Generation Mode Dropdown -->
+          <div class="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
+            <span class="text-xs text-slate-400">🎨 Image Gen:</span>
+            <select
+              bind:value={imageGenMode}
+              class="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
+            >
+              <option value="none">None</option>
+              <option value="probable">Probable (50%)</option>
+              <option value="definitely">Definitely (100%)</option>
+            </select>
           </div>
 
           <div class="flex items-center gap-4">

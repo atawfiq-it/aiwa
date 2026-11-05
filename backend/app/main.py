@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 import app.services.tasks.workflow_handlers  # noqa: F401
 from app.api.v1.agents import router as agents_router
+from app.api.v1.characters import router as characters_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.conversations import router as conversations_router
 from app.api.v1.files import router as files_router
@@ -19,6 +20,7 @@ from app.core.config import settings
 from app.core.security import cleanup_session_token, generate_session_token, verify_local_token
 from app.database.engine import engine, run_migrations
 from app.database.models import ModelConfig
+from app.database.seed_characters import seed_characters_if_empty
 from app.services.tasks.queue import task_queue
 from app.supervisors import comfyui_supervisor
 from app.supervisors.model_supervisor import ModelState, model_supervisor
@@ -43,6 +45,7 @@ async def auto_load_default_model():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     run_migrations()
+    seed_characters_if_empty()  # Add this line
     token = generate_session_token()
     task_queue.start_worker()
 
@@ -101,6 +104,7 @@ app.include_router(media_router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agents_router, prefix=settings.API_V1_PREFIX)
 app.include_router(workflows_router, prefix=settings.API_V1_PREFIX)
+app.include_router(characters_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/api/v1/health")

@@ -9,6 +9,8 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
+    character_id: str | None = None
+    image_gen_mode: str = "none"  # "none", "probable", "definitely"
     knowledge_base_id: str | None = None
     messages: list[ChatMessage]
     temperature: float = 0.7
