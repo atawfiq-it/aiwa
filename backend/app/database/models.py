@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import MetaData
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -8,11 +9,24 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+# Ensure all constraints have deterministic names for SQLite batch migrations
+naming_convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+SQLModel.metadata = MetaData(naming_convention=naming_convention)
+
+
 class Conversation(SQLModel, table=True):
     __tablename__ = "conversations"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     title: str = Field(default="New Conversation")
+    character_id: str | None = Field(default=None, foreign_key="characters.id")
+    image_gen_mode: str = Field(default="none")  # "none", "probable", "definitely"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -186,3 +200,17 @@ class WorkflowRun(SQLModel, table=True):
     error_message: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     completed_at: datetime | None = None
+
+
+class Character(SQLModel, table=True):
+    __tablename__ = "characters"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    avatar_emoji: str = Field(default="🤖")
+    description: str | None = None
+    system_prompt: str
+    voice_persona: str = Field(default="af_heart")  # "af_heart", "am_adam", "bf_emma"
+    temperature: float = Field(default=0.7)
+    is_builtin: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=utc_now)

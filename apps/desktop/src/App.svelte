@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  const API_BASE = 'http://127.0.0.1:8000/api/v1';
+  const API_BASE = 'http://127.0.0.1:8888/api/v1';
 
   // Navigation
   let currentTab: 'chat' | 'knowledge' | 'media' | 'tasks' | 'settings' = 'chat';
@@ -62,7 +62,7 @@
 
   async function checkBackend() {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/v1/health');
+      const res = await fetch('http://127.0.0.1:8888/api/v1/health');
       connectionStatus = res.ok ? 'Backend Connected' : 'Backend Offline';
     } catch {
       connectionStatus = 'Backend Offline';
