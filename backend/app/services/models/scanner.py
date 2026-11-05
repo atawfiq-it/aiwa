@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ class ModelScannerService:
         )
 
     def scan_directories(self, search_paths: list[str]) -> list[dict[str, Any]]:
-        """Scans multiple custom directory paths for GGUF models and matching mmproj files."""
+        """Deep recursive scan across all sub-directory levels for LLM, Diffusion, and Voice models."""
         discovered_models: list[dict[str, Any]] = []
         mmproj_files: dict[str, Path] = {}
 
@@ -30,56 +31,92 @@ class ModelScannerService:
             if path_obj.exists() and path_obj.is_dir():
                 valid_dirs.append(path_obj)
             else:
-                logger.warning(f"Scan path does not exist or is not a directory: {p}")
+                logger.warning(f"Scan path does not exist: {p}")
 
-        # 1. First pass: Index all multimodal projectors in all scanned directories
-        for directory in valid_dirs:
-            for file in directory.glob("**/*.gguf"):
-                if "mmproj" in file.name.lower():
-                    # Key by directory or sanitized base name
-                    mmproj_files[file.stem] = file
+        # Pass 1: Recursive indexing of multimodal projectors across all depths
+        for root_dir in valid_dirs:
+            for root, _, files in os.walk(root_dir, followlinks=True):
+                for f in files:
+                    if f.lower().endswith(".gguf") and "mmproj" in f.lower():
+                        proj_path = Path(root) / f
+                        mmproj_files[proj_path.stem] = proj_path
 
-        # 2. Second pass: Index base language & vision models
-        for directory in valid_dirs:
-            for file in directory.glob("**/*.gguf"):
-                fname = file.name
-                # Skip projector files as standalone models
-                if "mmproj" in fname.lower():
-                    continue
+        # Pass 2: Recursive indexing of all models across all subdirectories
+        for root_dir in valid_dirs:
+            for root, _, files in os.walk(root_dir, followlinks=True):
+                for f in files:
+                    file_path = Path(root) / f
+                    fname_lower = f.lower()
 
-                size_bytes = file.stat().st_size
-                size_gb = round(size_bytes / (1024**3), 2)
-                quant = self._detect_quantization(fname)
-                is_vision = self._is_vision_model(fname)
+                    # A. LLM & Vision Models (.gguf)
+                    if fname_lower.endswith(".gguf"):
+                        if "mmproj" in fname_lower:
+                            continue  # Projector already cataloged
 
-                # Attempt pairing with a suitable mmproj in the same folder or catalog
-                matched_mmproj = None
-                if is_vision:
-                    for proj_name, proj_path in mmproj_files.items():
-                        # Match models from same family (e.g. Qwen2.5-VL)
-                        if "qwen" in fname.lower() and "qwen" in proj_name.lower():
-                            matched_mmproj = str(proj_path)
-                            break
-                        elif proj_path.parent == file.parent:
-                            matched_mmproj = str(proj_path)
-                            break
+                        size_bytes = file_path.stat().st_size
+                        is_vision = self._is_vision_model(f)
+                        matched_mmproj = None
+                        if is_vision:
+                            for proj_name, proj_p in mmproj_files.items():
+                                if "qwen" in fname_lower and "qwen" in proj_name.lower():
+                                    matched_mmproj = str(proj_p)
+                                    break
+                                elif proj_p.parent == file_path.parent:
+                                    matched_mmproj = str(proj_p)
+                                    break
 
-                display_name = (
-                    file.stem.replace("-Q4_K_M", "").replace(".Q4_K_M", "").replace("_", " ")
-                )
+                        discovered_models.append(
+                            {
+                                "category": "llm",
+                                "display_name": file_path.stem.replace("-Q4_K_M", "").replace(
+                                    "_", " "
+                                ),
+                                "file_path": str(file_path),
+                                "file_size_gb": round(size_bytes / (1024**3), 2),
+                                "file_size_bytes": size_bytes,
+                                "quantization": self._detect_quantization(f),
+                                "vision_supported": is_vision and matched_mmproj is not None,
+                                "mmproj_path": matched_mmproj,
+                                "directory": str(root),
+                            }
+                        )
 
-                discovered_models.append(
-                    {
-                        "display_name": display_name,
-                        "file_path": str(file.resolve()),
-                        "file_size_gb": size_gb,
-                        "file_size_bytes": size_bytes,
-                        "quantization": quant,
-                        "vision_supported": is_vision and matched_mmproj is not None,
-                        "mmproj_path": matched_mmproj,
-                        "parent_directory": str(directory),
-                    }
-                )
+                    # B. Diffusion / Image Generation Models (.safetensors, .ckpt)
+                    elif fname_lower.endswith((".safetensors", ".ckpt")):
+                        size_bytes = file_path.stat().st_size
+                        if size_bytes > 500 * 1024 * 1024:  # Filter out tiny adapter files (<500MB)
+                            discovered_models.append(
+                                {
+                                    "category": "diffusion",
+                                    "display_name": file_path.stem.replace("_", " "),
+                                    "file_path": str(file_path),
+                                    "file_size_gb": round(size_bytes / (1024**3), 2),
+                                    "file_size_bytes": size_bytes,
+                                    "quantization": "fp16" if "fp16" in fname_lower else "fp32",
+                                    "vision_supported": False,
+                                    "mmproj_path": None,
+                                    "directory": str(root),
+                                }
+                            )
+
+                    # C. Voice / Speech Models (.onnx, Whisper / Kokoro weights)
+                    elif fname_lower.endswith((".onnx", ".bin")) and any(
+                        k in fname_lower for k in ["whisper", "kokoro", "tts", "stt", "voice"]
+                    ):
+                        size_bytes = file_path.stat().st_size
+                        discovered_models.append(
+                            {
+                                "category": "voice",
+                                "display_name": file_path.stem.replace("_", " "),
+                                "file_path": str(file_path),
+                                "file_size_gb": round(size_bytes / (1024**3), 2),
+                                "file_size_bytes": size_bytes,
+                                "quantization": "int8" if "int8" in fname_lower else "fp32",
+                                "vision_supported": False,
+                                "mmproj_path": None,
+                                "directory": str(root),
+                            }
+                        )
 
         return discovered_models
 

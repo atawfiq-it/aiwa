@@ -1,12 +1,14 @@
+import re
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.security import verify_local_token
 from app.database.engine import get_db
 from app.database.models import Attachment, Conversation, Message
+from app.supervisors.model_supervisor import model_supervisor
 
 router = APIRouter(
     prefix="/conversations",
@@ -30,10 +32,7 @@ class MessageCreate(BaseModel):
 
 
 @router.post("", response_model=Conversation)
-def create_conversation(
-    req: ConversationCreate,
-    db: Session = Depends(get_db),
-):
+def create_conversation(req: ConversationCreate, db: Session = Depends(get_db)):
     conv = Conversation(title=req.title or "New Conversation")
     db.add(conv)
     db.commit()
@@ -49,13 +48,10 @@ def list_conversations(db: Session = Depends(get_db)):
 
 
 @router.get("/{conversation_id}")
-def get_conversation_with_messages(
-    conversation_id: str,
-    db: Session = Depends(get_db),
-):
+def get_conversation_with_messages(conversation_id: str, db: Session = Depends(get_db)):
     conv = db.get(Conversation, conversation_id)
     if not conv:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     messages = db.exec(
         select(Message)
@@ -70,7 +66,7 @@ def get_conversation_with_messages(
                 "id": m.id,
                 "role": m.role,
                 "content": m.content,
-                "created_at": m.created_at,
+                "created_at": m.created_at.isoformat(),
                 "attachments": m.attachments,
             }
             for m in messages
@@ -86,10 +82,9 @@ def rename_conversation(
 ):
     conv = db.get(Conversation, conversation_id)
     if not conv:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-    conv.title = req.title
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    conv.title = req.title.strip() or "Untitled Conversation"
     conv.updated_at = datetime.now(UTC)
-
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -97,13 +92,10 @@ def rename_conversation(
 
 
 @router.delete("/{conversation_id}")
-def delete_conversation(
-    conversation_id: str,
-    db: Session = Depends(get_db),
-):
+def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
     conv = db.get(Conversation, conversation_id)
     if not conv:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail="Conversation not found")
     db.delete(conv)
     db.commit()
     return {"status": "success", "message": "Conversation deleted"}
@@ -117,7 +109,12 @@ def add_message(
 ):
     conv = db.get(Conversation, conversation_id)
     if not conv:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Choice 1 A: Auto-generate title from first user prompt if still default
+    if conv.title == "New Conversation" and req.role == "user" and req.content.strip():
+        first_line = req.content.strip().split("\n")[0]
+        conv.title = first_line[:35] + ("..." if len(first_line) > 35 else "")
 
     msg = Message(
         conversation_id=conversation_id,
@@ -128,7 +125,6 @@ def add_message(
     db.commit()
     db.refresh(msg)
 
-    # Associate attachments if provided
     if req.attachment_ids:
         for att_id in req.attachment_ids:
             att = db.get(Attachment, att_id)
@@ -138,8 +134,60 @@ def add_message(
         db.commit()
 
     conv.updated_at = datetime.now(UTC)
-
     db.add(conv)
     db.commit()
     db.refresh(msg)
     return msg
+
+
+@router.get("/{conversation_id}/export")
+def export_conversation_markdown(conversation_id: str, db: Session = Depends(get_db)):
+    """Choice 2 B: Rich Markdown export with metadata and timestamps."""
+    conv = db.get(Conversation, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = db.exec(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())  # type: ignore
+    ).all()
+
+    active_model_name = (
+        model_supervisor.active_model.display_name if model_supervisor.active_model else "Unknown"
+    )
+
+    # Build Rich Markdown document
+    md_lines = [
+        f"# {conv.title}",
+        "",
+        "> **AIWA Workstation Conversation Record**",
+        f"> - **Conversation ID**: `{conv.id}`",
+        f"> - **Exported At**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        f"> - **Model**: {active_model_name}",
+        f"> - **Total Messages**: {len(messages)}",
+        "",
+        "---",
+        "",
+    ]
+
+    for m in messages:
+        timestamp_str = m.created_at.strftime("%H:%M:%S")
+        role_label = "👤 User" if m.role == "user" else "🤖 Assistant"
+
+        md_lines.append(f"### {role_label} `[{timestamp_str}]`")
+        if m.attachments:
+            att_names = ", ".join(f"`{a.file_name}`" for a in m.attachments)
+            md_lines.append(f"*Attachments: {att_names}*\n")
+        md_lines.append(m.content)
+        md_lines.append("\n---\n")
+
+    full_md = "\n".join(md_lines)
+    safe_title = re.sub(r"[^a-zA-Z0-9_\-]", "_", conv.title[:25])
+    filename = f"chat_{safe_title}_{conv.id[:6]}.md"
+
+    return Response(
+        content=full_md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
