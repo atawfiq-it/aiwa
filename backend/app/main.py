@@ -11,6 +11,7 @@ from app.api.v1.characters import router as characters_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.conversations import router as conversations_router
 from app.api.v1.files import router as files_router
+from app.api.v1.huggingface import router as hf_router
 from app.api.v1.knowledge_bases import router as kb_router
 from app.api.v1.media import router as media_router
 from app.api.v1.models import router as models_router
@@ -105,6 +106,7 @@ app.include_router(kb_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agents_router, prefix=settings.API_V1_PREFIX)
 app.include_router(workflows_router, prefix=settings.API_V1_PREFIX)
 app.include_router(characters_router, prefix=settings.API_V1_PREFIX)
+app.include_router(hf_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/api/v1/health")

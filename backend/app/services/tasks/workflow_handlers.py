@@ -47,7 +47,7 @@ async def handle_llm_summarize(task: Task, db: Session) -> dict[str, Any]:
     prompt = (
         "You are an executive assistant. Please provide a clear, concise, and professional "
         "summary of the following document content suitable for spoken audio:\n\n"
-        f"{text_to_summarize[:8888]}"
+        f"{text_to_summarize[:8000]}"
     )
 
     url = f"{model_supervisor.base_url}/v1/chat/completions"

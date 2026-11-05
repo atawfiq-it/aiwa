@@ -93,7 +93,7 @@ test:
 
 # Start the FastAPI backend daemon with live reloading
 dev:
-    uv run --project backend uvicorn app.main:app --reload --reload-dir backend/app --app-dir backend --host 127.0.0.1 --port 8888
+    uv run --project backend uvicorn app.main:app --reload --reload-dir backend/app --app-dir backend --host 127.0.0.1 --port 8000
 
 # Start the Svelte desktop UI in local browser dev mode (http://localhost:5173)
 ui-dev:
