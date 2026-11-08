@@ -2,7 +2,7 @@ import os
 import secrets
 from pathlib import Path
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Query, status
 
 from app.core.config import settings
 
@@ -54,12 +54,16 @@ def cleanup_session_token() -> None:
 
 async def verify_local_token(
     x_aiwa_token: str | None = Header(default=None, alias="X-AIWA-Token"),
+    token: str | None = Query(default=None),
 ) -> None:
-    """FastAPI dependency protecting endpoints against unauthorized local callers."""
+    """FastAPI dependency allowing authorization via X-AIWA-Token header OR ?token= query parameter."""
     if not settings.AUTH_ENABLED:
         return
 
-    if not x_aiwa_token or not secrets.compare_digest(x_aiwa_token, ACTIVE_SESSION_TOKEN or ""):
+    provided = x_aiwa_token or token
+    active_token = get_active_session_token()
+
+    if not provided or not active_token or not secrets.compare_digest(provided, active_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing local authorization token",

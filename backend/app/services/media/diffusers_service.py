@@ -1,5 +1,6 @@
 import gc
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,25 +18,38 @@ logger = logging.getLogger(__name__)
 
 class DirectDiffusionService:
     def list_checkpoints(self) -> list[dict[str, Any]]:
-        """Scans for available .safetensors files in data/models and custom directories."""
-        from app.services.models.scanner import model_scanner
+        """Deep recursive scan across all directories configured in .env for .safetensors and .ckpt."""
+        search_dirs = settings.get_diffusion_search_paths()
+        discovered: list[dict[str, Any]] = []
+        seen_paths = set()
 
-        # Scan models directory
-        models = model_scanner.scan_directories([str(settings.MODELS_DIR.resolve())])
-        checkpoints = []
+        for base_dir in search_dirs:
+            logger.info(f"Scanning for diffusion checkpoints in: {base_dir}")
+            for root, _, files in os.walk(base_dir, followlinks=True):
+                for f in files:
+                    lower = f.lower()
+                    if lower.endswith((".safetensors", ".ckpt")):
+                        file_path = Path(root) / f
+                        resolved_str = str(file_path.resolve())
 
-        for m in models:
-            if m.get("category") == "diffusion" or m["file_path"].endswith(
-                (".safetensors", ".ckpt")
-            ):
-                checkpoints.append(
-                    {
-                        "name": m["display_name"],
-                        "path": m["file_path"],
-                        "size_gb": m.get("file_size_gb", 0),
-                    }
-                )
-        return checkpoints
+                        if resolved_str in seen_paths:
+                            continue
+
+                        size_bytes = file_path.stat().st_size
+                        # Filter out tiny adapter/LoRA files (< 500 MB)
+                        if size_bytes > 500 * 1024 * 1024:
+                            seen_paths.add(resolved_str)
+                            discovered.append(
+                                {
+                                    "name": file_path.stem.replace("_", " "),
+                                    "filename": f,
+                                    "path": resolved_str,
+                                    "size_gb": round(size_bytes / (1024**3), 2),
+                                    "folder": str(Path(root).name),
+                                }
+                            )
+
+        return sorted(discovered, key=lambda x: x["name"])
 
     async def generate_image(
         self,

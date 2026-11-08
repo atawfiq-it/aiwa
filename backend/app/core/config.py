@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
     TASK_WORKER_POLL_INTERVAL_SECONDS: float = 1.0
     MAX_GPU_USAGE_PERCENT: float = 90.0  # Max 90% of VRAM allowed for model allocation
     LLAMA_SERVER_BIN: str = ""
+    DIFFUSION_MODEL_DIRECTORIES: str = ""  # Comma or colon-separated paths in .env
 
     @property
     def is_production(self) -> bool:
@@ -71,6 +73,22 @@ class Settings(BaseSettings):
         if not self.DATABASE_URL:
             db_path = self.DATABASE_DIR / "aiwa.db"
             object.__setattr__(self, "DATABASE_URL", f"sqlite:///{db_path}")
+
+    def get_diffusion_search_paths(self) -> list[Path]:
+        """Parses multiple diffusion directories from .env and includes data/models."""
+        paths: list[Path] = [self.MODELS_DIR.resolve()]
+
+        if self.DIFFUSION_MODEL_DIRECTORIES:
+            # Split on commas, colons, or newlines
+            raw_entries = re.split(r"[,:\n]", self.DIFFUSION_MODEL_DIRECTORIES)
+            for entry in raw_entries:
+                cleaned = entry.strip().strip("'\"")
+                if cleaned:
+                    p = Path(cleaned).resolve()
+                    if p.exists() and p.is_dir() and p not in paths:
+                        paths.append(p)
+
+        return paths
 
 
 settings = Settings()
