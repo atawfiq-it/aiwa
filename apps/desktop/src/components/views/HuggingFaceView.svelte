@@ -1,7 +1,7 @@
 <script lang="ts">
   import { apiFetch } from '../../lib/api';
 
-  let hfQuery = 'qwen2.5-vl';
+  let hfQuery = 'qwen3-vl';
   let hfResults: any[] = [];
   let isSearching = false;
   let selectedFiles: any = null;

@@ -1,5 +1,4 @@
 import argparse
-import os
 from pathlib import Path
 import subprocess
 
@@ -12,38 +11,33 @@ COMFY_VENV = COMFY_DIR / ".venv"
 def setup_comfyui(checkpoints_dir: str = ""):
     COMFY_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1. Clone ComfyUI repository if needed
+    # 1. Clone stable ComfyUI release tag v0.3.10
     if not (COMFY_APP / "main.py").exists():
-        print("📦 Cloning ComfyUI into services/comfyui/app...")
+        print("📦 Cloning stable ComfyUI (tag v0.3.10) into services/comfyui/app...")
         subprocess.run(
             [
                 "git",
                 "clone",
-                "--depth",
-                "1",
+                "--branch",
+                "v0.3.10",
+                "--single-branch",
                 "https://github.com/comfyanonymous/ComfyUI.git",
                 str(COMFY_APP),
             ],
             check=True,
         )
     else:
-        print("✅ ComfyUI source code already present.")
+        print("✅ ComfyUI source code present.")
 
-    # 2. Create isolated uv virtual environment
+    # 2. Create isolated uv environment
     if not COMFY_VENV.exists():
         print("🐍 Creating isolated Python virtual environment for ComfyUI...")
         subprocess.run(["uv", "venv", str(COMFY_VENV)], check=True)
 
     python_bin = COMFY_VENV / "bin" / "python"
 
-    # Set generous HTTP timeout for large wheel downloads
-    env = os.environ.copy()
-    env["UV_HTTP_TIMEOUT"] = "300"
-
-    # 3. Install PyTorch directly from official PyTorch CloudFront CDN
-    print(
-        "⚡ Installing PyTorch directly from Official PyTorch CDN (https://download.pytorch.org/whl/cu124)..."
-    )
+    # 3. Upgrade PyTorch to 2.5.1 (Fixes list[int] infer_schema ValueError)
+    print("⚡ Installing PyTorch 2.5.1 with CUDA 12.4 support...")
     subprocess.run(
         [
             "uv",
@@ -51,18 +45,14 @@ def setup_comfyui(checkpoints_dir: str = ""):
             "install",
             "--python",
             str(python_bin),
-            "torch",
+            "torch>=2.5.1",
             "torchvision",
             "torchaudio",
             "--index-url",
             "https://download.pytorch.org/whl/cu124",
         ],
-        env=env,
         check=True,
     )
-
-    # 4. Install ComfyUI requirements
-    print("📋 Installing ComfyUI dependencies...")
     subprocess.run(
         [
             "uv",
@@ -73,11 +63,10 @@ def setup_comfyui(checkpoints_dir: str = ""):
             "-r",
             str(COMFY_APP / "requirements.txt"),
         ],
-        env=env,
         check=True,
     )
 
-    # 5. Link existing model checkpoints
+    # 4. Link existing model checkpoints
     target_models = COMFY_APP / "models" / "checkpoints"
     target_models.mkdir(parents=True, exist_ok=True)
 
@@ -85,19 +74,16 @@ def setup_comfyui(checkpoints_dir: str = ""):
         src_path = Path(checkpoints_dir).resolve()
         if src_path.exists():
             print(f"🔗 Linking existing checkpoints from {src_path}...")
-            count = 0
-            for ext in ("*.safetensors", "*.ckpt"):
+            for ext in ["*.safetensors", "*.ckpt"]:
                 for f in src_path.glob(ext):
                     symlink_dest = target_models / f.name
                     if not symlink_dest.exists():
                         symlink_dest.symlink_to(f)
                         print(f"   -> Linked {f.name}")
-                        count += 1
-            print(f"✅ Linked {count} checkpoint(s).")
         else:
             print(f"⚠️ Checkpoint directory not found at: {src_path}")
 
-    print("\n🎉 ComfyUI successfully provisioned and ready for embedded launch!")
+    print("\n🎉 ComfyUI fixed, upgraded to PyTorch 2.5.1, and ready!")
 
 
 if __name__ == "__main__":

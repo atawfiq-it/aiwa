@@ -25,6 +25,9 @@ dependencies = [
     "pre-commit>=3.8.0",
     "pyinstaller>=6.10.0",
     "huggingface-hub>=0.24.0",
+    "diffusers>=0.30.0",
+    "transformers>=4.44.0",
+    "accelerate>=0.33.0",
 ]
 
 [project.optional-dependencies]

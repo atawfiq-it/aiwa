@@ -31,12 +31,12 @@ uv run --project backend pre-commit run --all-files
 just dev
 # Terminal 2 #
 just register-model \
-  "/path/to/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf" \
-  "/path/to/mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf" \
-  "Qwen2.5-VL-7B-Instruct"
+  "/path/to/Qwen3-VL-8B-Instruct-Q4_K_M.gguf" \
+  "/path/to/mmproj-Qwen3-VL-8B-Instruct-f16.gguf" \
+  "Qwen3-VL-8B-Instruct"
 # OR
 python3 scripts/register_local_model.py \
   --model "/path/to/model.gguf" \
   --mmproj "/path/to/mmproj.gguf" \
-  --name "Qwen2.5-VL-7B" \
+  --name "Qwen3-VL-8B" \
   --ctx 4096

@@ -4,11 +4,11 @@ import json
 import mimetypes
 import random
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import logger
 from PIL import Image
 from sqlmodel import Session
 from sse_starlette.sse import ServerSentEvent
@@ -21,8 +21,8 @@ from app.services.tasks.queue import task_queue
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
 
-def file_to_data_url(file_path: str, max_dimension: int = 1024) -> str:
-    """Reads, resizes, and converts a local image file into a base64 Data URL."""
+def file_to_data_url(file_path: str, max_dimension: int = 1096) -> str:
+    """Reads, downscales if necessary, and converts image to base64 Data URL."""
     path = Path(file_path).resolve()
     mime_type, _ = mimetypes.guess_type(path)
     if not mime_type:
@@ -31,7 +31,6 @@ def file_to_data_url(file_path: str, max_dimension: int = 1024) -> str:
     try:
         with Image.open(path) as img:
             img = img.convert("RGB")
-            # Auto-scale large images to reduce vision patch token count
             if max(img.size) > max_dimension:
                 img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
             buffered = io.BytesIO()
@@ -44,35 +43,12 @@ def file_to_data_url(file_path: str, max_dimension: int = 1024) -> str:
         return f"data:{mime_type};base64,{encoded}"
 
 
-def should_generate_image(mode: str, user_prompt: str) -> bool:
-    """Evaluates whether to generate an image based on the selected dropdown mode."""
-    if mode == "definitely":
-        return True
-    if mode == "probable":
-        visual_triggers = [
-            "draw",
-            "picture",
-            "image",
-            "scene",
-            "illustration",
-            "painting",
-            "visualize",
-            "render",
-            "photo",
-        ]
-        has_keywords = any(w in user_prompt.lower() for w in visual_triggers)
-        return has_keywords or (random.random() < 0.5)
-    return False
-
-
 def format_messages_for_llm(
     messages: list[ChatMessage],
     knowledge_base_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Formats chat messages into OpenAI-compatible format with base64 images and RAG context."""
-    formatted: list[dict[str, Any]] = []
+    formatted = []
 
-    # Inject RAG context into the latest user query if a knowledge base is selected
     rag_context = ""
     if knowledge_base_id and messages:
         last_user_msg = next((m.content for m in reversed(messages) if m.role == "user"), None)
@@ -96,15 +72,36 @@ def format_messages_for_llm(
         else:
             parts: list[dict[str, Any]] = [{"type": "text", "text": content_text}]
             for img_path in msg.image_paths:
+                data_url = file_to_data_url(img_path)
                 parts.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": file_to_data_url(img_path)},
+                        "image_url": {"url": data_url},
                     }
                 )
             formatted.append({"role": msg.role, "content": parts})
 
     return formatted
+
+
+def should_generate_image(mode: str, user_prompt: str) -> bool:
+    """Evaluates whether to generate an image based on the selected mode."""
+    if mode == "definitely":
+        return True
+    if mode == "probable":
+        visual_triggers = [
+            "draw",
+            "picture",
+            "image",
+            "scene",
+            "illustration",
+            "painting",
+            "visualize",
+            "photo",
+        ]
+        has_keywords = any(w in user_prompt.lower() for w in visual_triggers)
+        return has_keywords or (random.random() < 0.5)
+    return False
 
 
 async def stream_chat_completion(
@@ -116,14 +113,11 @@ async def stream_chat_completion(
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> AsyncGenerator[ServerSentEvent, None]:
-    """Streams token responses from llama-server, persists messages, and handles in-chat image generation."""
-    # 1. Verify Model Supervisor Readiness
     if model_supervisor.state != ModelState.READY or not model_supervisor.active_model:
         err_msg = f"Model is not ready (current state: {model_supervisor.state.value})"
         yield ServerSentEvent(event="error", data=json.dumps({"error": err_msg}))
         return
 
-    # 2. Vision Compatibility Check
     has_images = any(len(m.image_paths or []) > 0 for m in messages)
     if has_images and not model_supervisor.active_model.vision_supported:
         err_msg = (
@@ -132,19 +126,28 @@ async def stream_chat_completion(
         yield ServerSentEvent(event="error", data=json.dumps({"error": err_msg}))
         return
 
-    # 3. Apply Character Persona (System Prompt & Temperature)
-    active_temperature = temperature
+    # Apply Persona / Character settings if provided
     if character_id:
         with Session(engine) as db:
             char = db.get(Character, character_id)
             if char:
-                active_temperature = char.temperature
-                # Insert character system prompt at the front
                 messages = [ChatMessage(role="system", content=char.system_prompt)] + [
                     m for m in messages if m.role != "system"
                 ]
+                temperature = char.temperature
 
-    # 4. Acquire Concurrency Semaphore
+    # Apply guidance when image generation is requested
+    if image_gen_mode == "definitely":
+        guidance = (
+            "\nNote: The user requested image generation. Provide a concise, creative response. "
+            "Do NOT attempt to draw text diagrams, ascii art, or icon grids; the image will "
+            "be generated and displayed by the system automatically."
+        )
+        if messages and messages[0].role == "system":
+            messages[0].content += f"\n{guidance}"
+        else:
+            messages = [ChatMessage(role="system", content=guidance)] + messages
+
     await model_supervisor.slot_semaphore.acquire()
     model_supervisor.active_requests += 1
 
@@ -156,19 +159,18 @@ async def stream_chat_completion(
         url = f"{model_supervisor.base_url}/v1/chat/completions"
         payload = {
             "messages": format_messages_for_llm(messages, knowledge_base_id),
-            "temperature": active_temperature,
+            "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
         }
 
-        # 5. Stream from llama-server
         async with httpx.AsyncClient(timeout=180.0) as client:
             async with client.stream("POST", url, json=payload) as response:
                 if response.status_code != 200:
                     err_body = await response.aread()
                     yield ServerSentEvent(
                         event="error",
-                        data=json.dumps({"error": f"Inference engine error: {err_body.decode()}"}),
+                        data=json.dumps({"error": f"Inference error: {err_body.decode()}"}),
                     )
                     return
 
@@ -192,7 +194,6 @@ async def stream_chat_completion(
                         except json.JSONDecodeError:
                             continue
 
-        # 6. Persist Completed Assistant Message to SQLite
         if conversation_id and accumulated_response:
             full_text = "".join(accumulated_response)
             with Session(engine) as db:
@@ -205,13 +206,15 @@ async def stream_chat_completion(
                 )
                 db.commit()
 
-        # 7. Evaluate Autonomous In-Chat Image Generation
+        yield ServerSentEvent(event="message_end", data=json.dumps({"finish_reason": "stop"}))
+
+        # Autonomous in-chat image generation via ComfyUI
         last_user_prompt = next((m.content for m in reversed(messages) if m.role == "user"), "")
         if should_generate_image(image_gen_mode, last_user_prompt):
             image_task = task_queue.submit_task(
                 task_type="image_generation",
                 parameters={
-                    "prompt": f"cinematic digital art of {last_user_prompt[:200]}",
+                    "prompt": f"cinematic digital art of {last_user_prompt[:250]}",
                     "width": 512,
                     "height": 512,
                     "steps": 4,
@@ -219,21 +222,11 @@ async def stream_chat_completion(
             )
             yield ServerSentEvent(
                 event="image_generation_started",
-                data=json.dumps(
-                    {
-                        "task_id": image_task.id,
-                        "prompt": last_user_prompt[:200],
-                    }
-                ),
+                data=json.dumps({"task_id": image_task.id}),
             )
-
-        # 8. Completion Event
-        yield ServerSentEvent(event="message_end", data=json.dumps({"finish_reason": "stop"}))
-
     except Exception as e:
-        logger.error(f"Error during chat completion: {e}", exc_info=True)
         yield ServerSentEvent(event="error", data=json.dumps({"error": str(e)}))
-
     finally:
         model_supervisor.active_requests = max(0, model_supervisor.active_requests - 1)
+        model_supervisor.last_active_at = datetime.now(UTC)
         model_supervisor.slot_semaphore.release()

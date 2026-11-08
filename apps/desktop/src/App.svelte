@@ -1,12 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import Navigation from './components/Navigation.svelte';
   import ChatHeader from './components/chat/ChatHeader.svelte';
   import ChatSidebar from './components/chat/ChatSidebar.svelte';
   import InputBar from './components/chat/InputBar.svelte';
+  import MessageList from './components/chat/MessageList.svelte';
+  import ImageStudio from './components/studios/ImageStudio.svelte';
+  import VoiceStudio from './components/studios/VoiceStudio.svelte';
   import HuggingFaceView from './components/views/HuggingFaceView.svelte';
+  import KnowledgeView from './components/views/KnowledgeView.svelte';
   import SettingsView from './components/views/SettingsView.svelte';
-  import { apiFetch } from './lib/api';
+  import TasksView from './components/views/TasksView.svelte';
+
+  import { apiFetch, ensureToken } from './lib/api';
   import {
     activeCharacterId,
     activeConversationId,
@@ -14,37 +19,38 @@
     characters,
     conversations,
     currentTab,
-    imageGenMode,
     registeredModels,
     sessionToken,
+    supervisorStatus,
   } from './lib/stores';
 
+  let activeMode: 'text' | 'image' | 'voice' = 'text';
   let messages: { role: string; content: string; image_paths?: string[] }[] = [];
   let isStreaming = false;
 
   async function init() {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const token = await invoke<string>('get_session_token');
-      if (token) $sessionToken = token;
-    } catch {}
+    await ensureToken();
+    const [convRes, modelRes, charRes, statusRes] = await Promise.all([
+      apiFetch('/conversations'),
+      apiFetch('/models'),
+      apiFetch('/characters'),
+      apiFetch('/models/status'),
+    ]);
 
-    const convRes = await apiFetch('/conversations');
-    if (convRes.ok) $conversations = await convRes.json();
-
-    const modelRes = await apiFetch('/models');
+    if (convRes.ok) {
+      $conversations = await convRes.json();
+      if ($conversations.length > 0 && !$activeConversationId) {
+        loadConversation($conversations[0].id);
+      }
+    }
     if (modelRes.ok) $registeredModels = await modelRes.json();
-
-    const charRes = await apiFetch('/characters');
     if (charRes.ok) {
       $characters = await charRes.json();
       if ($characters.length > 0 && !$activeCharacterId) $activeCharacterId = $characters[0].id;
     }
-
-    const statusRes = await apiFetch('/models/status');
     if (statusRes.ok) {
-      const status = await statusRes.json();
-      $activeModelId = status.active_model_id || '';
+      $supervisorStatus = await statusRes.json();
+      $activeModelId = $supervisorStatus.active_model_id || '';
     }
   }
 
@@ -58,6 +64,19 @@
   }
 
   async function handleSend(text: string, images: string[]) {
+    if (!$activeConversationId) {
+      const convRes = await apiFetch('/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: text.slice(0, 30) }),
+      });
+      if (convRes.ok) {
+        const c = await convRes.json();
+        $conversations = [c, ...$conversations];
+        $activeConversationId = c.id;
+      }
+    }
+
     messages = [...messages, { role: 'user', content: text, image_paths: images }];
     isStreaming = true;
     const assistantIdx = messages.length;
@@ -70,7 +89,6 @@
         body: JSON.stringify({
           conversation_id: $activeConversationId,
           character_id: $activeCharacterId,
-          image_gen_mode: $imageGenMode,
           messages: messages.slice(0, -1),
         }),
       });
@@ -102,26 +120,75 @@
   onMount(init);
 </script>
 
-<div class="flex h-screen bg-slate-950 text-slate-100 font-sans">
-  <Navigation />
+<div class="flex h-screen bg-slate-950 text-slate-100 font-sans flex-col">
+  <!-- Top-Level Prominent Modality Bar (Choice 2 A) -->
+  <header class="h-14 bg-slate-900 border-b border-slate-800 px-6 flex items-center justify-between select-none shadow-md">
+    <div class="flex items-center gap-3">
+      <div class="h-8 w-8 bg-indigo-600 rounded-lg flex items-center justify-center font-black text-sm text-white">
+        A
+      </div>
+      <span class="font-bold text-sm tracking-tight text-slate-200">AIWA Workstation</span>
+    </div>
 
+    <!-- 3 Prominent Content Studios -->
+    <div class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+      <button
+        on:click={() => { activeMode = 'text'; $currentTab = 'chat'; }}
+        class={`px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+          activeMode === 'text' && $currentTab === 'chat'
+            ? 'bg-indigo-600 text-white shadow'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        💬 Text & Vision
+      </button>
+
+      <button
+        on:click={() => { activeMode = 'image'; $currentTab = 'media'; }}
+        class={`px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+          activeMode === 'image' && $currentTab === 'media'
+            ? 'bg-indigo-600 text-white shadow'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        🎨 Image Studio
+      </button>
+
+      <button
+        on:click={() => { activeMode = 'voice'; $currentTab = 'tasks'; }}
+        class={`px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+          activeMode === 'voice' && $currentTab === 'tasks'
+            ? 'bg-indigo-600 text-white shadow'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        🎙️ Voice Studio
+      </button>
+    </div>
+
+    <!-- Utility Tabs -->
+    <div class="flex items-center gap-2">
+      <button on:click={() => ($currentTab = 'knowledge')} class={`px-2.5 py-1 rounded text-xs transition ${$currentTab === 'knowledge' ? 'bg-slate-800 text-indigo-400' : 'text-slate-400 hover:text-slate-200'}`} title="RAG Knowledge">📚</button>
+      <button on:click={() => ($currentTab = 'hf')} class={`px-2.5 py-1 rounded text-xs transition ${$currentTab === 'hf' ? 'bg-slate-800 text-indigo-400' : 'text-slate-400 hover:text-slate-200'}`} title="HuggingFace Hub">🌐</button>
+      <button on:click={() => ($currentTab = 'settings')} class={`px-2.5 py-1 rounded text-xs transition ${$currentTab === 'settings' ? 'bg-slate-800 text-indigo-400' : 'text-slate-400 hover:text-slate-200'}`} title="Settings">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Workspace Studio Body -->
   <div class="flex-1 flex overflow-hidden">
     {#if $currentTab === 'chat'}
       <ChatSidebar onSelectConversation={loadConversation} />
       <div class="flex-1 flex flex-col bg-slate-900">
         <ChatHeader />
-        <!-- Message Bubbles -->
-        <div class="flex-1 overflow-y-auto p-6 space-y-4">
-          {#each messages as msg}
-            <div class={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div class={`max-w-2xl px-4 py-3 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
-                <p class="whitespace-pre-wrap">{msg.content}</p>
-              </div>
-            </div>
-          {/each}
-        </div>
+        <MessageList {messages} onSelectQuickPrompt={(prompt) => handleSend(prompt, [])} />
         <InputBar {isStreaming} onSendMessage={handleSend} />
       </div>
+    {:else if $currentTab === 'media'}
+      <ImageStudio />
+    {:else if $currentTab === 'tasks'}
+      <VoiceStudio />
+    {:else if $currentTab === 'knowledge'}
+      <KnowledgeView />
     {:else if $currentTab === 'hf'}
       <HuggingFaceView />
     {:else if $currentTab === 'settings'}

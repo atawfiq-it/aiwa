@@ -50,6 +50,15 @@ class ModelSupervisor:
             "vram": vram_arbiter.get_vram_status(),
         }
 
+    def is_idle_for(self, seconds: float) -> bool:
+        """Returns True if there are zero active inference requests and idle duration exceeds threshold."""
+        if self.active_requests > 0:
+            return False
+        if not self.last_active_at:
+            return True
+        elapsed = (datetime.now(UTC) - self.last_active_at).total_seconds()
+        return elapsed >= seconds
+
     async def load_model(self, model: ModelConfig) -> None:
         async with self.lock:
             if self.active_model and self.active_model.id == model.id:
@@ -96,12 +105,20 @@ class ModelSupervisor:
             self.active_model = model
 
             server_bin = Path(settings.LLAMA_SERVER_BIN).resolve()
+
+            effective_ctx = max(model.context_length, 4096)
+            if effective_ctx != model.context_length:
+                logger.info(
+                    f"Elevating context length from {model.context_length} to "
+                    f"{effective_ctx} to support system personas and vision tokens."
+                )
+
             cmd = [
                 settings.LLAMA_SERVER_BIN,
                 "-m",
                 str(model_path),
                 "-c",
-                str(model.context_length),
+                str(effective_ctx),
                 "-ngl",
                 str(calculated_layers),
                 "--host",

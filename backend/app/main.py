@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
@@ -18,18 +18,23 @@ from app.api.v1.models import router as models_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.workflows import router as workflows_router
 from app.core.config import settings
-from app.core.security import cleanup_session_token, generate_session_token, verify_local_token
+from app.core.security import (
+    cleanup_session_token,
+    generate_session_token,
+    get_active_session_token,
+    verify_local_token,
+)
 from app.database.engine import engine, run_migrations
 from app.database.models import ModelConfig
 from app.database.seed_characters import seed_characters_if_empty
 from app.services.tasks.queue import task_queue
-from app.supervisors import comfyui_supervisor
+from app.supervisors.comfyui_supervisor import comfyui_supervisor
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
 
 async def auto_load_default_model():
-    """Automatically loads default registered model on startup if present."""
-    await asyncio.sleep(0.5)  # Let migrations complete
+    """Automatically loads default registered model on startup in background if present."""
+    await asyncio.sleep(0.5)
     with Session(engine) as db:
         default_model = db.exec(
             select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
@@ -45,8 +50,9 @@ async def auto_load_default_model():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup sequence
     run_migrations()
-    seed_characters_if_empty()  # Add this line
+    seed_characters_if_empty()
     token = generate_session_token()
     task_queue.start_worker()
 
@@ -58,12 +64,12 @@ async def lifespan(app: FastAPI):
         f"(written to {settings.TOKEN_FILE_PATH})\n"
     )
 
-    # lifespan shutdown
     yield
+
+    # Shutdown sequence
     await task_queue.stop_worker()
     await model_supervisor.unload_model()
     await comfyui_supervisor.stop()
-
     cleanup_session_token()
 
 
@@ -111,9 +117,22 @@ app.include_router(hf_router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/api/v1/health")
 async def health_check():
+    """Public health-check endpoint for daemon readiness probing."""
     return {"status": "ok", "version": settings.VERSION}
+
+
+@app.get("/api/v1/auth/dev-token")
+async def get_development_token():
+    """Allows local loopback clients to acquire the session token in development mode."""
+    if settings.is_production:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dev-token endpoint disabled in production mode.",
+        )
+    return {"token": get_active_session_token()}
 
 
 @app.get("/api/v1/auth/verify", dependencies=[Depends(verify_local_token)])
 async def verify_auth():
+    """Verifies that the provided session token header is valid."""
     return {"status": "authenticated"}

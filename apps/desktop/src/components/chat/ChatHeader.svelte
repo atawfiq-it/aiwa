@@ -8,12 +8,15 @@
     imageGenMode,
     registeredModels,
     sessionToken,
+    supervisorStatus,
   } from '../../lib/stores';
 
-  let selectedDropdownModelId = $activeModelId;
+  let selectedDropdownModelId = '';
   let isSwitching = false;
 
-  $: if ($activeModelId && !selectedDropdownModelId) selectedDropdownModelId = $activeModelId;
+  $: if ($activeModelId && !selectedDropdownModelId) {
+    selectedDropdownModelId = $activeModelId;
+  }
 
   async function applyModelSwitch() {
     if (!selectedDropdownModelId || selectedDropdownModelId === $activeModelId) return;
@@ -22,7 +25,8 @@
       const res = await apiFetch(`/models/${selectedDropdownModelId}/load`, { method: 'POST' });
       if (res.ok) {
         $activeModelId = selectedDropdownModelId;
-        alert('Model loaded successfully!');
+        const statusRes = await apiFetch('/models/status');
+        if (statusRes.ok) $supervisorStatus = await statusRes.json();
       }
     } finally {
       isSwitching = false;
@@ -35,37 +39,68 @@
   }
 </script>
 
-<header class="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/80">
+<header class="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/90 backdrop-blur select-none">
   <div class="flex items-center gap-3">
-    <!-- Model Selector -->
-    <select bind:value={selectedDropdownModelId} class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2.5 py-1.5 focus:outline-none">
-      {#each $registeredModels as m}
-        <option value={m.id}>{m.display_name} {m.vision_supported ? '👁️' : ''} {m.id === $activeModelId ? '(Active)' : ''}</option>
-      {/each}
-    </select>
+    <!-- Model Selector with Icon Badge -->
+    <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
+      <span class="text-xs text-slate-400 font-medium">Model:</span>
+      <select
+        bind:value={selectedDropdownModelId}
+        class="bg-transparent text-xs text-slate-200 font-semibold focus:outline-none cursor-pointer max-w-[180px] truncate"
+      >
+        {#if $registeredModels.length === 0}
+          <option value="">No models registered</option>
+        {:else}
+          {#each $registeredModels as m}
+            <option value={m.id}>
+              {m.display_name} {m.vision_supported ? '👁️' : ''}
+            </option>
+          {/each}
+        {/if}
+      </select>
 
-    {#if selectedDropdownModelId && selectedDropdownModelId !== $activeModelId}
-      <button on:click={applyModelSwitch} disabled={isSwitching} class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded animate-pulse">
-        {isSwitching ? 'Loading...' : 'Apply Switch'}
-      </button>
-    {/if}
+      {#if selectedDropdownModelId && selectedDropdownModelId !== $activeModelId}
+        <button
+          on:click={applyModelSwitch}
+          disabled={isSwitching}
+          class="ml-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-[11px] font-bold rounded text-white transition animate-pulse"
+        >
+          {isSwitching ? 'Loading...' : 'Apply'}
+        </button>
+      {/if}
+    </div>
 
     <!-- Persona Selector -->
-    <select bind:value={$activeCharacterId} class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2.5 py-1.5 focus:outline-none">
-      {#each $characters as c}
-        <option value={c.id}>{c.avatar_emoji} {c.name}</option>
-      {/each}
-    </select>
+    <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
+      <span class="text-xs text-slate-400 font-medium">Persona:</span>
+      <select
+        bind:value={$activeCharacterId}
+        class="bg-transparent text-xs text-slate-200 font-semibold focus:outline-none cursor-pointer"
+      >
+        {#each $characters as c}
+          <option value={c.id}>{c.avatar_emoji} {c.name}</option>
+        {/each}
+      </select>
+    </div>
 
-    <!-- Image Gen Mode -->
-    <select bind:value={$imageGenMode} class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2.5 py-1.5 focus:outline-none">
-      <option value="none">🎨 Img: None</option>
-      <option value="probable">🎨 Img: Probable (50%)</option>
-      <option value="definitely">🎨 Img: Definitely</option>
-    </select>
+
   </div>
 
-  <button on:click={exportMarkdown} disabled={!$activeConversationId} class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 rounded-lg transition disabled:opacity-40">
-    📥 Export Record (.md)
-  </button>
+  <div class="flex items-center gap-3">
+    <!-- Live VRAM Status Pill -->
+    {#if $supervisorStatus?.vram}
+      <div class="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-slate-800/50 border border-slate-700/60 rounded-lg text-[11px] font-mono text-slate-300">
+        <span class="h-2 w-2 rounded-full {$supervisorStatus.state === 'Ready' ? 'bg-emerald-400' : 'bg-amber-400'}"></span>
+        <span>VRAM: {($supervisorStatus.vram.used_mb / 1024).toFixed(1)} / {($supervisorStatus.vram.allowed_ceiling_mb / 1024).toFixed(1)} GB</span>
+      </div>
+    {/if}
+
+    <button
+      on:click={exportMarkdown}
+      disabled={!$activeConversationId}
+      class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/80 text-xs text-slate-300 rounded-lg transition disabled:opacity-40 flex items-center gap-1.5"
+    >
+      📥 Export (.md)
+    </button>
+  </div>
 </header>

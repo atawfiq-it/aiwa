@@ -70,11 +70,13 @@ class TaskQueue:
             await asyncio.sleep(settings.TASK_WORKER_POLL_INTERVAL_SECONDS)
 
     async def _execute_next_job(self) -> None:
+        from app.supervisors.model_supervisor import ModelState, model_supervisor
+
         task_id = None
         task_type = None
 
         with Session(engine) as db:
-            # Fetch oldest queued task
+            # Check oldest queued task
             stmt = (
                 select(Task)
                 .where(Task.status == "queued")
@@ -85,12 +87,42 @@ class TaskQueue:
             if not task:
                 return
 
-            task.status = "running"
-            task.updated_at = datetime.now(UTC)
-            db.add(task)
-            db.commit()
             task_id = task.id
             task_type = task.task_type
+
+        # GPU-Heavy Tasks (Image Generation via ComfyUI)
+        if task_type == "image_generation":
+            # 1. Protect active inference
+            if model_supervisor.active_requests > 0:
+                logger.info(
+                    "Task worker: Inference in progress. Waiting for active stream to finish..."
+                )
+                return
+
+            # 2. Check 10-second expedited idle TTL
+            EXPEDITED_IDLE_SECONDS = 10.0
+            if model_supervisor.state == ModelState.READY:
+                if not model_supervisor.is_idle_for(EXPEDITED_IDLE_SECONDS):
+                    logger.info(
+                        "Task worker: Waiting for 10-second idle window before unloading LLM..."
+                    )
+                    return
+
+                # 3. 10s idle reached: Safely unload llama-server to free 100% of GPU for ComfyUI
+                logger.info(
+                    "⏳ 10-second idle window reached. Unloading LLM to yield GPU to ComfyUI..."
+                )
+                await model_supervisor.unload_model()
+
+        # Mark task as running
+        with Session(engine) as db:
+            current_task = db.get(Task, task_id)
+            if not current_task:
+                return
+            current_task.status = "running"
+            current_task.updated_at = datetime.now(UTC)
+            db.add(current_task)
+            db.commit()
 
         handler = TASK_HANDLERS.get(task_type)
         if not handler:
@@ -109,6 +141,7 @@ class TaskQueue:
                 current_task.updated_at = datetime.now(UTC)
                 db.add(current_task)
                 db.commit()
+                logger.info(f"Task {task_id} ({task_type}) completed successfully.")
             except Exception as e:
                 logger.error(f"Task {task_id} failed: {e}", exc_info=True)
                 self._mark_task_failed(task_id, str(e))

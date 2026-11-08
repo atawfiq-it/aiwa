@@ -11,6 +11,7 @@ from app.core.security import verify_local_token
 from app.database.engine import get_db
 from app.database.models import Attachment, GeneratedFile, Task
 from app.services.media.comfyui import comfyui_adapter
+from app.services.media.diffusers_service import direct_diffusion
 from app.services.tasks.queue import task_queue
 
 router = APIRouter(prefix="/media", tags=["Media"], dependencies=[Depends(verify_local_token)])
@@ -32,6 +33,42 @@ class TTSRequest(BaseModel):
 class STTRequest(BaseModel):
     attachment_id: str
     model_size: str = "base"
+
+
+class DirectImageRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    negative_prompt: str = "ugly, blurry, distorted, low quality"
+    checkpoint_path: str
+    width: int = 512
+    height: int = 512
+    steps: int = 4
+    guidance_scale: float = 1.5
+
+
+@router.get("/diffusion/checkpoints")
+def get_diffusion_checkpoints():
+    """Returns available .safetensors checkpoints for Image Studio."""
+    return direct_diffusion.list_checkpoints()
+
+
+@router.post("/diffusion/generate-direct")
+async def generate_image_direct(req: DirectImageRequest):
+    """Direct, synchronous image generation on dedicated GPU."""
+    try:
+        return await direct_diffusion.generate_image(
+            prompt=req.prompt,
+            negative_prompt=req.negative_prompt,
+            checkpoint_path=req.checkpoint_path,
+            width=req.width,
+            height=req.height,
+            steps=req.steps,
+            guidance_scale=req.guidance_scale,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        ) from e
 
 
 @router.get("/comfyui/status")

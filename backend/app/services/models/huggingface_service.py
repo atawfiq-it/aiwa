@@ -31,7 +31,7 @@ class HuggingFaceService:
         results = []
         for m in models:
             repo_id = m.id
-            is_vision = any(k in repo_id.lower() for k in ["-vl", "vision", "qwen2.5-vl", "llava"])
+            is_vision = any(k in repo_id.lower() for k in ["-vl", "vision", "qwen3-vl", "llava"])
 
             results.append(
                 {

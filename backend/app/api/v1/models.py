@@ -103,21 +103,14 @@ def register_scanned_model(
     # Check if already registered
     existing = db.exec(select(ModelConfig).where(ModelConfig.file_path == req.file_path)).first()
     if existing:
+        existing.context_length = max(req.context_length, 4096)
+        if req.mmproj_path:
+            existing.mmproj_path = req.mmproj_path
+            existing.vision_supported = True
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
         return existing
-
-    model = ModelConfig(
-        display_name=req.display_name,
-        file_path=str(model_path.resolve()),
-        context_length=req.context_length,
-        vision_supported=req.vision_supported,
-        mmproj_path=req.mmproj_path,
-        gpu_layers=-1,  # Auto-tuned dynamically by VRAM arbiter on load
-        is_default=req.is_default,
-    )
-    db.add(model)
-    db.commit()
-    db.refresh(model)
-    return model
 
 
 class ModelRegisterRequest(BaseModel):

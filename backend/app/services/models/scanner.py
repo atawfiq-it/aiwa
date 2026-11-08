@@ -17,7 +17,7 @@ class ModelScannerService:
     def _is_vision_model(filename: str) -> bool:
         lower = filename.lower()
         return any(
-            k in lower for k in ["-vl", "vision", "llava", "qwen-vl", "qwen2-vl", "qwen2.5-vl"]
+            k in lower for k in ["-vl", "vision", "llava", "qwen-vl", "qwen3-vl", "qwen3-vl"]
         )
 
     def scan_directories(self, search_paths: list[str]) -> list[dict[str, Any]]:

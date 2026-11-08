@@ -26,6 +26,21 @@ def generate_session_token() -> str:
     return token
 
 
+def get_active_session_token() -> str | None:
+    """Returns the current in-memory token or reads from runtime token file."""
+    global ACTIVE_SESSION_TOKEN
+    if ACTIVE_SESSION_TOKEN:
+        return ACTIVE_SESSION_TOKEN
+
+    token_path = settings.TOKEN_FILE_PATH
+    if token_path.exists():
+        try:
+            return token_path.read_text().strip()
+        except OSError:
+            pass
+    return None
+
+
 def cleanup_session_token() -> None:
     """Remove session token on application shutdown."""
     global ACTIVE_SESSION_TOKEN

@@ -13,6 +13,12 @@ TARGET_DIR.mkdir(parents=True, exist_ok=True)
 
 SOURCE_ZIP_URL = "https://github.com/ggml-org/llama.cpp/archive/refs/tags/v0.9.0.zip"
 
+# Ensure CUDA paths are included in system PATH
+CUDA_PATHS = ["/usr/local/cuda/bin", "/usr/local/cuda-12/bin", "/opt/cuda/bin"]
+for cp in CUDA_PATHS:
+    if Path(cp).exists() and cp not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{cp}:{os.environ.get('PATH', '')}"
+
 
 def has_tool(name: str) -> bool:
     return shutil.which(name) is not None
@@ -21,7 +27,7 @@ def has_tool(name: str) -> bool:
 def build_llama_server():
     if not has_tool("cmake"):
         raise RuntimeError(
-            "CMake is required to build llama-server. Install it with: sudo apt install cmake build-essential"
+            "CMake is required. Install with: sudo apt install cmake build-essential"
         )
 
     temp_zip = TARGET_DIR / "llama_v0.9.0_src.zip"
@@ -46,34 +52,42 @@ def build_llama_server():
         z.extractall(SRC_DIR)
     temp_zip.unlink()
 
-    # GitHub archives create a subfolder like 'llama.cpp-0.9.0'
     subfolders = [p for p in SRC_DIR.iterdir() if p.is_dir()]
     extracted_root = subfolders[0] if subfolders else SRC_DIR
     build_dir = extracted_root / "build"
 
-    # Detect CUDA
     has_cuda = has_tool("nvcc")
-    cmake_flags = [
-        "-DCMAKE_BUILD_TYPE=Release",
-    ]
+    cmake_flags = ["-DCMAKE_BUILD_TYPE=Release"]
+
     if has_cuda:
-        print("⚡ NVIDIA CUDA compiler (nvcc) detected! Enabling -DGGML_CUDA=ON...")
+        print("⚡ CUDA Compiler (nvcc) detected! Enabling -DGGML_CUDA=ON...")
         cmake_flags.append("-DGGML_CUDA=ON")
     else:
-        print("ℹ️  No nvcc found. Compiling with CPU optimizations (-DGGML_CUDA=OFF)...")
+        print("⚠️ nvcc not found in PATH. Searching common CUDA paths...")
+        # Check if nvcc binary exists directly
+        for cp in CUDA_PATHS:
+            nvcc_bin = Path(cp) / "nvcc"
+            if nvcc_bin.exists():
+                print(
+                    f"⚡ Found CUDA compiler at {nvcc_bin}! Enabling -DGGML_CUDA=ON..."
+                )
+                cmake_flags.append("-DGGML_CUDA=ON")
+                has_cuda = True
+                break
+
+    if not has_cuda:
+        print("ℹ️ Compiling CPU version...")
         cmake_flags.append("-DGGML_CUDA=OFF")
 
-    # Configure
-    print("⚙️  Configuring build with CMake...")
+    print("⚙️  Configuring CMake...")
     subprocess.run(
         ["cmake", "-B", str(build_dir), *cmake_flags],
         cwd=str(extracted_root),
         check=True,
     )
 
-    # Compile using all available CPU threads
     cpu_count = os.cpu_count() or 4
-    print(f"🔨 Compiling llama-server using {cpu_count} CPU cores...")
+    print(f"🔨 Compiling llama-server with {cpu_count} CPU cores...")
     subprocess.run(
         [
             "cmake",
@@ -90,23 +104,12 @@ def build_llama_server():
         check=True,
     )
 
-    # Locate compiled binary
-    possible_bins = [
-        build_dir / "bin" / "llama-server",
-        build_dir / "llama-server",
-    ]
+    possible_bins = [build_dir / "bin" / "llama-server", build_dir / "llama-server"]
     found_bin = next((b for b in possible_bins if b.exists()), None)
-
     if not found_bin:
-        # Search recursively in build dir
         matches = list(build_dir.glob("**/llama-server"))
         if matches:
             found_bin = matches[0]
-
-    if not found_bin or not found_bin.exists():
-        raise FileNotFoundError(
-            "Build finished but 'llama-server' executable was not found."
-        )
 
     target_bin = TARGET_DIR / "llama-server"
     shutil.copy(str(found_bin), str(target_bin))
@@ -114,14 +117,7 @@ def build_llama_server():
         target_bin.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR | stat.S_IXUSR
     )
 
-    print(
-        f"\n🎉 Successfully compiled and installed llama-server to:\n   {target_bin.resolve()}"
-    )
-
-    # Print version info
-    res = subprocess.run([str(target_bin), "--version"], capture_output=True, text=True)
-    version_output = res.stdout.strip() or res.stderr.strip()
-    print(f"ℹ️  Binary info: {version_output[:120]}")
+    print(f"\n🎉 Compiled native llama-server to: {target_bin.resolve()}")
 
 
 if __name__ == "__main__":
