@@ -157,3 +157,12 @@ workstation:
 # Provision embedded ComfyUI and link your existing checkpoints
 install-comfyui checkpoints="":
     python3 scripts/setup_comfyui.py --checkpoints "{{checkpoints}}"
+
+# Package the folder-based Python sidecar runtime
+package-sidecar:
+    python3 scripts/package_sidecar.py
+
+# Build native Linux standalone bundles (.AppImage and .deb)
+package-desktop: package-sidecar
+    cd apps/desktop && npm run build
+    cd apps/desktop && npx @tauri-apps/cli build

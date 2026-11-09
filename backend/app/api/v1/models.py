@@ -127,7 +127,28 @@ class ModelRegisterRequest(BaseModel):
 
 @router.get("", response_model=list[ModelConfig])
 def list_models(db: Session = Depends(get_db)):
-    return db.exec(select(ModelConfig)).all()
+    """Lists registered models, strictly filtering out any directories or nonexistent files."""
+    all_models = db.exec(select(ModelConfig)).all()
+    valid_models = []
+
+    for m in all_models:
+        p = Path(m.file_path)
+        # Only return models that are real existing files, NEVER directories
+        if p.exists() and p.is_file() and not p.is_dir():
+            valid_models.append(m)
+
+    return valid_models
+
+
+@router.delete("/{model_id}")
+def delete_model(model_id: str, db: Session = Depends(get_db)):
+    """Allows removing a model from configuration."""
+    model = db.get(ModelConfig, model_id)
+    if not model:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
+    db.delete(model)
+    db.commit()
+    return {"status": "success", "message": f"Model '{model.display_name}' deleted"}
 
 
 @router.post("", response_model=ModelConfig)

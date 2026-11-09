@@ -4,13 +4,13 @@
   import ChatSidebar from './components/chat/ChatSidebar.svelte';
   import InputBar from './components/chat/InputBar.svelte';
   import MessageList from './components/chat/MessageList.svelte';
+  import AgentStudio from './components/studios/AgentStudio.svelte';
   import ImageStudio from './components/studios/ImageStudio.svelte';
   import VoiceStudio from './components/studios/VoiceStudio.svelte';
   import HuggingFaceView from './components/views/HuggingFaceView.svelte';
   import KnowledgeView from './components/views/KnowledgeView.svelte';
   import SettingsView from './components/views/SettingsView.svelte';
   import TasksView from './components/views/TasksView.svelte';
-
   import { apiFetch, ensureToken } from './lib/api';
   import {
     activeCharacterId,
@@ -20,16 +20,21 @@
     conversations,
     currentTab,
     registeredModels,
-    sessionToken,
     supervisorStatus,
   } from './lib/stores';
 
-  let activeMode: 'text' | 'image' | 'voice' = 'text';
-  let messages: { role: string; content: string; image_paths?: string[] }[] = [];
+  let activeMode: 'text' | 'image' | 'voice' | 'agent' = 'text';
+  let messages: {
+    role: string;
+    content: string;
+    image_paths?: string[];
+    is_truncated?: boolean;
+  }[] = [];
   let isStreaming = false;
 
   async function init() {
     await ensureToken();
+
     const [convRes, modelRes, charRes, statusRes] = await Promise.all([
       apiFetch('/conversations'),
       apiFetch('/models'),
@@ -43,11 +48,18 @@
         loadConversation($conversations[0].id);
       }
     }
-    if (modelRes.ok) $registeredModels = await modelRes.json();
+
+    if (modelRes.ok) {
+      $registeredModels = await modelRes.json();
+    }
+
     if (charRes.ok) {
       $characters = await charRes.json();
-      if ($characters.length > 0 && !$activeCharacterId) $activeCharacterId = $characters[0].id;
+      if ($characters.length > 0 && !$activeCharacterId) {
+        $activeCharacterId = $characters[0].id;
+      }
     }
+
     if (statusRes.ok) {
       $supervisorStatus = await statusRes.json();
       $activeModelId = $supervisorStatus.active_model_id || '';
@@ -59,11 +71,37 @@
     const res = await apiFetch(`/conversations/${id}`);
     if (res.ok) {
       const data = await res.json();
-      messages = data.messages.map((m: any) => ({ role: m.role, content: m.content }));
+      messages = data.messages.map((m: any) => ({
+        role: m.role,
+        content: m.content,
+        is_truncated: false,
+      }));
+    }
+  }
+
+  function populateQuickPrompt(promptTextTemplate: string) {
+    const inputElement = document.querySelector('input[type="text"]') as HTMLInputElement;
+    if (inputElement) {
+      inputElement.value = promptTextTemplate + ' ';
+      inputElement.focus();
+      inputElement.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  function continueLastMessage() {
+    if (messages.length === 0 || isStreaming) return;
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg.role === 'assistant') {
+      lastMsg.is_truncated = false;
+      handleSend(
+        'Please continue writing from exactly where you left off, without repeating yourself.',
+        []
+      );
     }
   }
 
   async function handleSend(text: string, images: string[]) {
+    // 1. Ensure conversation exists in SQLite
     if (!$activeConversationId) {
       const convRes = await apiFetch('/conversations', {
         method: 'POST',
@@ -77,10 +115,28 @@
       }
     }
 
-    messages = [...messages, { role: 'user', content: text, image_paths: images }];
+    // 2. Persist user message
+    if ($activeConversationId) {
+      await apiFetch(`/conversations/${$activeConversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'user', content: text }),
+      });
+
+      apiFetch('/conversations').then(async (res) => {
+        if (res.ok) $conversations = await res.json();
+      });
+    }
+
+    // 3. Append to reactive message list
+    messages = [
+      ...messages,
+      { role: 'user', content: text, image_paths: images, is_truncated: false },
+    ];
     isStreaming = true;
+
     const assistantIdx = messages.length;
-    messages = [...messages, { role: 'assistant', content: '' }];
+    messages = [...messages, { role: 'assistant', content: '', is_truncated: false }];
 
     try {
       const response = await apiFetch('/chat/completions', {
@@ -88,10 +144,17 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversation_id: $activeConversationId,
-          character_id: $activeCharacterId,
+          character_id: $activeCharacterId || null,
           messages: messages.slice(0, -1),
         }),
       });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        messages[assistantIdx].content = `⚠️ Error: ${err.detail || 'Inference failed'}`;
+        messages = [...messages];
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -100,18 +163,28 @@
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+
         for (const line of decoder.decode(value).split('\n')) {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6).trim());
+
               if (data.text) {
                 messages[assistantIdx].content += data.text;
+                messages = [...messages];
+              }
+
+              if (data.finish_reason === 'length') {
+                messages[assistantIdx].is_truncated = true;
                 messages = [...messages];
               }
             } catch {}
           }
         }
       }
+    } catch (e: any) {
+      messages[assistantIdx].content = `⚠️ Network Error: ${e.message}`;
+      messages = [...messages];
     } finally {
       isStreaming = false;
     }
@@ -155,19 +228,37 @@
       </button>
 
       <button
-        on:click={() => { activeMode = 'voice'; $currentTab = 'tasks'; }}
+        on:click={() => { activeMode = 'voice'; $currentTab = 'voice'; }}
         class={`px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
-          activeMode === 'voice' && $currentTab === 'tasks'
+          $currentTab === 'voice'
             ? 'bg-indigo-600 text-white shadow'
             : 'text-slate-400 hover:text-slate-200'
         }`}
       >
         🎙️ Voice Studio
       </button>
+
+      <button
+        on:click={() => { activeMode = 'agent'; $currentTab = 'agent'; }}
+        class={`px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+          $currentTab === 'agent'
+            ? 'bg-indigo-600 text-white shadow'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        🤖 Agent Studio
+      </button>
     </div>
 
     <!-- Utility Tabs -->
     <div class="flex items-center gap-2">
+      <button
+        on:click={() => ($currentTab = 'tasks')}
+        class={`px-2.5 py-1 rounded text-xs transition ${$currentTab === 'tasks' ? 'bg-slate-800 text-indigo-400' : 'text-slate-400 hover:text-slate-200'}`}
+        title="Live Task Queue Dashboard"
+      >
+        ⚡ Tasks
+      </button>
       <button on:click={() => ($currentTab = 'knowledge')} class={`px-2.5 py-1 rounded text-xs transition ${$currentTab === 'knowledge' ? 'bg-slate-800 text-indigo-400' : 'text-slate-400 hover:text-slate-200'}`} title="RAG Knowledge">📚</button>
       <button on:click={() => ($currentTab = 'hf')} class={`px-2.5 py-1 rounded text-xs transition ${$currentTab === 'hf' ? 'bg-slate-800 text-indigo-400' : 'text-slate-400 hover:text-slate-200'}`} title="HuggingFace Hub">🌐</button>
       <button on:click={() => ($currentTab = 'settings')} class={`px-2.5 py-1 rounded text-xs transition ${$currentTab === 'settings' ? 'bg-slate-800 text-indigo-400' : 'text-slate-400 hover:text-slate-200'}`} title="Settings">⚙️</button>
@@ -180,13 +271,21 @@
       <ChatSidebar onSelectConversation={loadConversation} />
       <div class="flex-1 flex flex-col bg-slate-900">
         <ChatHeader />
-        <MessageList {messages} onSelectQuickPrompt={(prompt) => handleSend(prompt, [])} />
+        <MessageList
+          {messages}
+          onSelectQuickPrompt={populateQuickPrompt}
+          onContinueMessage={continueLastMessage}
+        />
         <InputBar {isStreaming} onSendMessage={handleSend} />
       </div>
     {:else if $currentTab === 'media'}
       <ImageStudio />
-    {:else if $currentTab === 'tasks'}
+    {:else if $currentTab === 'voice'}
       <VoiceStudio />
+    {:else if $currentTab === 'agent'}
+      <AgentStudio />
+    {:else if $currentTab === 'tasks'}
+      <TasksView />
     {:else if $currentTab === 'knowledge'}
       <KnowledgeView />
     {:else if $currentTab === 'hf'}

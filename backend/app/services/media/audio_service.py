@@ -70,19 +70,32 @@ class AudioService:
             raise RuntimeError(
                 "kokoro/soundfile is not installed. Install with: uv sync --extra audio"
             )
+        import numpy as np
         import soundfile as sf
         from kokoro import KPipeline
 
+        logger.info(f"Synthesizing full speech ({len(text)} chars) with voice '{voice}'...")
         pipeline = KPipeline(lang_code="a")
         generator = pipeline(text, voice=voice, speed=1.0)
 
         out_filename = f"tts_{uuid.uuid4().hex[:8]}.wav"
         out_path = settings.GENERATED_DIR / out_filename
 
+        # Concatenate ALL audio chunks so full multi-paragraph text is synthesized
+        audio_chunks = []
         for _, _, audio in generator:
-            sf.write(str(out_path), audio, 24000)
-            break  # Save first generated chunk
+            if audio is not None and len(audio) > 0:
+                audio_chunks.append(audio)
 
+        if not audio_chunks:
+            raise RuntimeError("Kokoro generated no audio output.")
+
+        full_audio = np.concatenate(audio_chunks)
+        sf.write(str(out_path), full_audio, 24000)
+
+        logger.info(
+            f"✅ Full audio synthesized ({round(len(full_audio) / 24000, 1)}s): {out_path.name}"
+        )
         return out_path
 
 

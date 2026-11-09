@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     LLAMA_SERVER_BIN: str = "llama-server"  # system binary or path to llama-server
     LLAMA_SERVER_HOST: str = "127.0.0.1"
     LLAMA_SERVER_PORT: int = 8080
-    LLAMA_PARALLEL_SLOTS: int = 4
+    LLAMA_PARALLEL_SLOTS: int = 1
     DEFAULT_STATIC_VRAM_GB: float = 8.0  # Fallback VRAM budget when pynvml is unavailable
     VRAM_SAFETY_MARGIN_MB: int = 1024  # Keep 1GB safety cushion
     COMFYUI_BASE_URL: str = "http://127.0.0.1:8188"

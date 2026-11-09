@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from fastapi import logger
 from PIL import Image
 from sqlmodel import Session
 from sse_starlette.sse import ServerSentEvent
@@ -111,7 +112,7 @@ async def stream_chat_completion(
     image_gen_mode: str = "none",
     knowledge_base_id: str | None = None,
     temperature: float = 0.7,
-    max_tokens: int = 2048,
+    max_tokens: int = 4096,
 ) -> AsyncGenerator[ServerSentEvent, None]:
     if model_supervisor.state != ModelState.READY or not model_supervisor.active_model:
         err_msg = f"Model is not ready (current state: {model_supervisor.state.value})"
@@ -131,6 +132,7 @@ async def stream_chat_completion(
         with Session(engine) as db:
             char = db.get(Character, character_id)
             if char:
+                logger.info(f"🎭 Activating Persona: '{char.name}' (Temp: {char.temperature})")
                 messages = [ChatMessage(role="system", content=char.system_prompt)] + [
                     m for m in messages if m.role != "system"
                 ]
@@ -183,13 +185,23 @@ async def stream_chat_completion(
                             break
                         try:
                             parsed = json.loads(raw_data)
-                            delta = parsed.get("choices", [{}])[0].get("delta", {})
+                            choice = parsed.get("choices", [{}])[0]
+                            delta = choice.get("delta", {})
                             content = delta.get("content", "")
+                            finish_reason = choice.get("finish_reason")
+
                             if content:
                                 accumulated_response.append(content)
                                 yield ServerSentEvent(
                                     event="token",
                                     data=json.dumps({"text": content}),
+                                )
+
+                            # Emit finish reason (e.g. "length" vs "stop")
+                            if finish_reason:
+                                yield ServerSentEvent(
+                                    event="message_end",
+                                    data=json.dumps({"finish_reason": finish_reason}),
                                 )
                         except json.JSONDecodeError:
                             continue

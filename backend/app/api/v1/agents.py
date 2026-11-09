@@ -4,10 +4,12 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
+from sse_starlette.sse import EventSourceResponse
 
 from app.core.security import verify_local_token
 from app.database.engine import get_db
 from app.database.models import Agent, ToolExecution
+from app.services.agents.agent_runner import agent_runner
 from app.services.agents.tools import TOOL_REGISTRY
 
 router = APIRouter(prefix="/agents", tags=["Agents"], dependencies=[Depends(verify_local_token)])
@@ -125,3 +127,20 @@ def decide_tool_approval(
         "result": execution.result_json,
         "error": execution.error_message,
     }
+
+
+class AgentRunRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    max_iterations: int = 5
+
+
+@router.post("/{agent_id}/run")
+async def run_autonomous_agent(agent_id: str, req: AgentRunRequest):
+    """Executes the autonomous agent tool-calling reasoning loop over SSE."""
+    return EventSourceResponse(
+        agent_runner.run_agent(
+            agent_id=agent_id,
+            user_prompt=req.prompt,
+            max_iterations=req.max_iterations,
+        )
+    )

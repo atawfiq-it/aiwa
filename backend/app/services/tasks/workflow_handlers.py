@@ -61,7 +61,8 @@ async def handle_llm_summarize(task: Task, db: Session) -> dict[str, Any]:
         "stream": False,
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    timeout_config = httpx.Timeout(connect=15.0, read=None, write=30.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout_config) as client:
         res = await client.post(url, json=payload)
         if res.status_code != 200:
             raise RuntimeError(f"LLM summarization failed: {res.text}")

@@ -13,10 +13,14 @@
     "windows": [
       {
         "title": "AIWA - Local Multimodal AI Workstation",
-        "width": 1280,
-        "height": 850,
+        "width": 1360,
+        "height": 880,
+        "minWidth": 960,
+        "minHeight": 640,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false
       }
     ],
     "security": {
@@ -25,9 +29,22 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["appimage", "deb"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "sidecar/**/*"
+    ],
     "externalBin": [
       "binaries/aiwa-backend"
-    ]
+    ],
+    "category": "Development",
+    "shortDescription": "Local Multimodal AI Workstation",
+    "longDescription": "Developer-oriented local multimodal AI workstation for language, vision, audio, and image generation."
   }
 }

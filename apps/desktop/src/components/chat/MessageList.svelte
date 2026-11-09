@@ -1,19 +1,28 @@
 <script lang="ts">
   import hljs from 'highlight.js';
   import 'highlight.js/styles/github-dark.css';
-  import { marked } from 'marked';
+  import { marked, type Tokens } from 'marked';
   import { apiFetch } from '../../lib/api';
 
-  export let messages: { role: string; content: string; image_paths?: string[] }[] = [];
+  export let messages: {
+    role: string;
+    content: string;
+    image_paths?: string[];
+    is_truncated?: boolean;
+  }[] = [];
   export let onSelectQuickPrompt: (text: string) => void;
+  export let onContinueMessage: () => void = () => {};
 
   let activeAudio: HTMLAudioElement | null = null;
   let playingIndex: number | null = null;
 
-  marked.setOptions({
-    highlight: (code, lang) => {
-      const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-      return hljs.highlight(code, { language }).value;
+  marked.use({
+    renderer: {
+      code(token: Tokens.Code): string {
+        const lang = token.lang && hljs.getLanguage(token.lang) ? token.lang : 'plaintext';
+        const highlighted = hljs.highlight(token.text, { language: lang }).value;
+        return `<pre><code class="hljs ${lang}">${highlighted}</code></pre>`;
+      },
     },
   });
 
@@ -87,7 +96,7 @@
         {#each starterCards as card}
           <button
             on:click={() => onSelectQuickPrompt(card.prompt)}
-            class="p-4 bg-slate-900 border border-slate-800 hover:border-indigo-500/50 hover:bg-slate-800/60 rounded-xl transition group"
+            class="p-4 bg-slate-900 border border-slate-800 hover:border-indigo-500/50 hover:bg-slate-800/60 rounded-xl transition group text-left"
           >
             <h3 class="text-xs font-bold text-indigo-400 group-hover:text-indigo-300">{card.title}</h3>
             <p class="text-[11px] text-slate-400 mt-1">{card.desc}</p>
@@ -122,11 +131,23 @@
             <!-- Assistant Actions: Text-to-Speech Button -->
             <div class="mt-3 pt-2 border-t border-slate-800/80 flex items-center gap-2">
               <button
+                type="button"
                 on:click={() => speakMessage(msg.content, i)}
                 class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 rounded-md flex items-center gap-1.5 transition"
               >
                 {playingIndex === i ? '⏸️ Pause Speech' : '🔊 Listen (Kokoro)'}
               </button>
+
+              <!-- Show Continue Button if message was cut off by token limit -->
+              {#if msg.is_truncated}
+                <button
+                  type="button"
+                  on:click={onContinueMessage}
+                  class="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/40 text-[11px] font-bold text-indigo-300 hover:text-white rounded-md flex items-center gap-1 transition"
+                >
+                  ▶️ Continue Generating
+                </button>
+              {/if}
             </div>
           {/if}
         </div>

@@ -106,11 +106,13 @@ class ModelSupervisor:
 
             server_bin = Path(settings.LLAMA_SERVER_BIN).resolve()
 
-            effective_ctx = max(model.context_length, 4096)
-            if effective_ctx != model.context_length:
+            effective_ctx_per_slot = max(model.context_length, 4096)
+            total_server_context = effective_ctx_per_slot * settings.LLAMA_PARALLEL_SLOTS
+
+            if total_server_context != model.context_length:
                 logger.info(
                     f"Elevating context length from {model.context_length} to "
-                    f"{effective_ctx} to support system personas and vision tokens."
+                    f"{total_server_context} to support system personas and vision tokens."
                 )
 
             cmd = [
@@ -118,7 +120,7 @@ class ModelSupervisor:
                 "-m",
                 str(model_path),
                 "-c",
-                str(effective_ctx),
+                str(total_server_context),
                 "-ngl",
                 str(calculated_layers),
                 "--host",

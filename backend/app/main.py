@@ -26,6 +26,7 @@ from app.core.security import (
 )
 from app.database.engine import engine, run_migrations
 from app.database.models import ModelConfig
+from app.database.seed_agents import seed_scenario_agents_if_empty
 from app.database.seed_characters import seed_characters_if_empty
 from app.services.tasks.queue import task_queue
 from app.supervisors.comfyui_supervisor import comfyui_supervisor
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
     # Startup sequence
     run_migrations()
     seed_characters_if_empty()
+    seed_scenario_agents_if_empty()
+
     token = generate_session_token()
     task_queue.start_worker()
 

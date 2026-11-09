@@ -37,9 +37,21 @@ class ModelScannerService:
         for root_dir in valid_dirs:
             for root, _, files in os.walk(root_dir, followlinks=True):
                 for f in files:
-                    if f.lower().endswith(".gguf") and "mmproj" in f.lower():
-                        proj_path = Path(root) / f
-                        mmproj_files[proj_path.stem] = proj_path
+                    file_path = Path(root) / f
+                    fname_lower = f.lower()
+
+                    # Guard: Must be a regular file, not a directory, and > 50 MB
+                    if not file_path.is_file() or file_path.is_dir():
+                        continue
+
+                    # A. LLM & Vision Models (.gguf)
+                    if fname_lower.endswith(".gguf"):
+                        if "mmproj" in fname_lower:
+                            continue
+
+                        size_bytes = file_path.stat().st_size
+                        if size_bytes < 50 * 1024 * 1024:  # Ignore files < 50MB
+                            continue
 
         # Pass 2: Recursive indexing of all models across all subdirectories
         for root_dir in valid_dirs:
