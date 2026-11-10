@@ -19,3 +19,7 @@ export const activeConversationId = writable<string | null>(null);
 export const characters = writable<Character[]>([]);
 export const activeCharacterId = writable<string>('');
 export const imageGenMode = writable<'none' | 'probable' | 'definitely'>('none');
+
+export type ThemePalette = 'dark' | 'light';
+const savedTheme = (typeof localStorage !== 'undefined' && localStorage.getItem('aiwa_theme') as ThemePalette) || 'dark';
+export const currentTheme = writable<ThemePalette>(savedTheme);

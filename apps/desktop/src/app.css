@@ -1,3 +1,41 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 🌙 Modern Dark Theme (Default) */
+:root[data-theme="dark"] {
+  --bg-base: #0f172a;
+  --bg-card: #1e293b;
+  --bubble-user: #4f46e5;
+  --bubble-user-text: #ffffff;
+  --bubble-assistant: #1e293b;
+  --bubble-assistant-text: #f8fafc;
+  --accent: #6366f1;
+  --accent-text: #ffffff;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --border-color: #334155;
+  --input-bg: #0f172a;
+}
+
+/* ☀️ Clean Modern Light Theme */
+:root[data-theme="light"] {
+  --bg-base: #f8fafc;
+  --bg-card: #ffffff;
+  --bubble-user: #2563eb;
+  --bubble-user-text: #ffffff;
+  --bubble-assistant: #ffffff;
+  --bubble-assistant-text: #0f172a;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --border-color: #e2e8f0;
+  --input-bg: #f1f5f9;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-main);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}

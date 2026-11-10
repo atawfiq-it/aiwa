@@ -40,3 +40,6 @@ python3 scripts/register_local_model.py \
   --mmproj "/path/to/mmproj.gguf" \
   --name "Qwen3-VL-8B" \
   --ctx 4096
+
+# Build/Verify Build
+cd apps/desktop && npm run build && cd ../..

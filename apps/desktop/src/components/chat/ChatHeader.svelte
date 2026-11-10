@@ -2,14 +2,13 @@
   import { apiFetch } from '../../lib/api';
   import {
     activeCharacterId,
-    activeConversationId,
     activeModelId,
     characters,
-    imageGenMode,
     registeredModels,
-    sessionToken,
     supervisorStatus,
   } from '../../lib/stores';
+
+  export let isPersonaPanelOpen: boolean = true;
 
   let selectedDropdownModelId = '';
   let isSwitching = false;
@@ -32,75 +31,73 @@
       isSwitching = false;
     }
   }
-
-  function exportMarkdown() {
-    if (!$activeConversationId) return;
-    window.open(`http://127.0.0.1:8000/api/v1/conversations/${$activeConversationId}/export?token=${$sessionToken}`, '_blank');
-  }
 </script>
 
-<header class="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/90 backdrop-blur select-none">
+<header class="h-14 border-b border-[var(--border-color)] px-6 flex items-center justify-between bg-[var(--bg-card)] select-none shadow-sm">
   <div class="flex items-center gap-3">
-    <!-- Model Selector with Icon Badge -->
-    <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
-      <span class="text-xs text-slate-400 font-medium">Model:</span>
+    <!-- Model Selector -->
+    <div class="flex items-center gap-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl px-3 py-1.5">
+      <span class="text-xs text-[var(--text-muted)] font-medium">Model:</span>
       <select
         bind:value={selectedDropdownModelId}
-        class="bg-transparent text-xs text-slate-200 font-semibold focus:outline-none cursor-pointer max-w-[180px] truncate"
+        class="bg-transparent text-xs text-[var(--text-main)] font-semibold focus:outline-none cursor-pointer max-w-[200px] truncate"
       >
         {#if $registeredModels.length === 0}
           <option value="">No models registered</option>
         {:else}
           {#each $registeredModels as m}
-            <option value={m.id}>
-              {m.display_name} {m.vision_supported ? '👁️' : ''}
-            </option>
+            <option value={m.id}>{m.display_name} {m.vision_supported ? '👁️' : ''}</option>
           {/each}
         {/if}
       </select>
 
       {#if selectedDropdownModelId && selectedDropdownModelId !== $activeModelId}
         <button
+          type="button"
           on:click={applyModelSwitch}
           disabled={isSwitching}
-          class="ml-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-[11px] font-bold rounded text-white transition animate-pulse"
+          class="ml-1 px-2.5 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-[11px] font-bold rounded-lg text-white transition animate-pulse"
         >
-          {isSwitching ? 'Loading...' : 'Apply'}
+          {isSwitching ? '...' : 'Apply'}
         </button>
       {/if}
     </div>
 
-    <!-- Persona Selector -->
-    <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1">
-      <span class="text-xs text-slate-400 font-medium">Persona:</span>
+    <!-- Persona Selector (No Emojis) -->
+    <div class="flex items-center gap-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl px-3 py-1.5">
+      <span class="text-xs text-[var(--text-muted)] font-medium">Persona:</span>
       <select
         bind:value={$activeCharacterId}
-        class="bg-transparent text-xs text-slate-200 font-semibold focus:outline-none cursor-pointer"
+        class="bg-transparent text-xs text-[var(--text-main)] font-semibold focus:outline-none cursor-pointer"
       >
         {#each $characters as c}
-          <option value={c.id}>{c.avatar_emoji} {c.name}</option>
+          <option value={c.id}>{c.name}</option>
         {/each}
       </select>
     </div>
-
-
   </div>
 
   <div class="flex items-center gap-3">
-    <!-- Live VRAM Status Pill -->
+    <!-- Live VRAM Gauge -->
     {#if $supervisorStatus?.vram}
-      <div class="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-slate-800/50 border border-slate-700/60 rounded-lg text-[11px] font-mono text-slate-300">
+      <div class="hidden xl:flex items-center gap-2 px-3 py-1 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl text-[11px] font-mono text-[var(--text-muted)]">
         <span class="h-2 w-2 rounded-full {$supervisorStatus.state === 'Ready' ? 'bg-emerald-400' : 'bg-amber-400'}"></span>
         <span>VRAM: {($supervisorStatus.vram.used_mb / 1024).toFixed(1)} / {($supervisorStatus.vram.allowed_ceiling_mb / 1024).toFixed(1)} GB</span>
       </div>
     {/if}
 
+    <!-- Toggle Persona Panel Button (Re-opens when closed) -->
     <button
-      on:click={exportMarkdown}
-      disabled={!$activeConversationId}
-      class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/80 text-xs text-slate-300 rounded-lg transition disabled:opacity-40 flex items-center gap-1.5"
+      type="button"
+      on:click={() => (isPersonaPanelOpen = !isPersonaPanelOpen)}
+      class={`px-3 py-1.5 border rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
+        isPersonaPanelOpen
+          ? 'bg-indigo-600/10 text-indigo-400 border-indigo-500/40'
+          : 'bg-[var(--bg-base)] text-[var(--text-muted)] border-[var(--border-color)] hover:text-[var(--text-main)]'
+      }`}
+      title="Toggle Persona Panel"
     >
-      📥 Export (.md)
+      <span>👤</span> Persona Profile
     </button>
   </div>
 </header>

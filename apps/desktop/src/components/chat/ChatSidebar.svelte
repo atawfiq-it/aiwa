@@ -1,11 +1,17 @@
 <script lang="ts">
   import { apiFetch } from '../../lib/api';
   import { activeConversationId, conversations } from '../../lib/stores';
+  import { sessionToken } from '../../lib/stores';
 
   export let onSelectConversation: (id: string) => void;
 
   let editingId: string | null = null;
   let editingTitle = '';
+
+  function exportConversation(id: string, e: Event) {
+    e.stopPropagation();
+    window.open(`http://127.0.0.1:8000/api/v1/conversations/${id}/export?token=${$sessionToken}`, '_blank');
+  }
 
   async function createNewConversation() {
     const res = await apiFetch('/conversations', {
@@ -91,19 +97,30 @@
           {:else}
             <span class="truncate flex-1 mr-2">{c.title}</span>
             <div class="opacity-0 group-hover:opacity-100 flex items-center gap-1">
+              <!-- Export Record Icon Button -->
+              <button
+                type="button"
+                on:click={(e) => exportConversation(c.id, e)}
+                class="text-slate-400 hover:text-indigo-400 p-0.5 transition"
+                title="Export Chat to Markdown (.md)"
+              >
+                📥
+              </button>
+              <!-- Rename Icon Button -->
               <button
                 type="button"
                 on:click={(e) => startRename(c, e)}
-                class="text-slate-500 hover:text-slate-300 p-0.5 transition"
-                title="Rename"
+                class="text-slate-400 hover:text-slate-200 p-0.5 transition"
+                title="Rename Conversation"
               >
                 ✏️
               </button>
+              <!-- Delete Icon Button -->
               <button
                 type="button"
                 on:click={(e) => deleteConversation(c.id, e)}
-                class="text-slate-500 hover:text-rose-400 p-0.5 transition"
-                title="Delete"
+                class="text-slate-400 hover:text-rose-400 p-0.5 transition"
+                title="Delete Conversation"
               >
                 ✕
               </button>
