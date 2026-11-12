@@ -11,7 +11,7 @@ struct BackendProcess(Mutex<Option<CommandChild>>);
 
 #[tauri::command]
 fn get_session_token(app: AppHandle) -> Result<String, String> {
-    // 1. Check runtime token in production data directory
+    // 1. Production bundle runtime data location
     if let Ok(app_dir) = app.path().app_data_dir() {
         let token_path = app_dir.join("data").join(".aiwa_session_token");
         if let Ok(token) = fs::read_to_string(&token_path) {
@@ -19,13 +19,13 @@ fn get_session_token(app: AppHandle) -> Result<String, String> {
         }
     }
 
-    // 2. Check local working directory
+    // 2. Local relative data directory
     let local_token = PathBuf::from("data/.aiwa_session_token");
     if let Ok(token) = fs::read_to_string(&local_token) {
         return Ok(token.trim().to_string());
     }
 
-    // 3. Check development relative path
+    // 3. Dev server fallback path
     let dev_token = PathBuf::from("../../data/.aiwa_session_token");
     if let Ok(token) = fs::read_to_string(&dev_token) {
         return Ok(token.trim().to_string());
@@ -36,22 +36,23 @@ fn get_session_token(app: AppHandle) -> Result<String, String> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .manage(BackendProcess(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![get_session_token])
         .setup(|app| {
-            // Spawn the folder-based sidecar launcher
-            println!("[AIWA Desktop] Launching backend folder-based sidecar...");
+            println!("[AIWA Desktop] Starting backend sidecar process...");
             let sidecar_command = app.shell().sidecar("aiwa-backend");
 
             if let Ok(cmd) = sidecar_command {
                 match cmd.spawn() {
                     Ok((_rx, child)) => {
                         let state = app.state::<BackendProcess>();
-                        *state.0.lock().unwrap() = Some(child);
+                        let mut guard = state.0.lock().unwrap();
+                        *guard = Some(child);
                         println!("[AIWA Desktop] ✅ Backend sidecar spawned successfully.");
                     }
                     Err(e) => {
-                        eprintln!("[AIWA Desktop] ⚠️ Failed spawning sidecar: {}", e);
+                        eprintln!("[AIWA Desktop] ⚠️ Failed spawning backend sidecar: {}", e);
                     }
                 }
             }
@@ -61,9 +62,9 @@ fn main() {
         .expect("Error while building AIWA desktop application")
         .run(|app_handle, event| {
             if let RunEvent::Exit = event {
-                // Terminate sidecar process on app exit so no orphan processes linger
                 let state = app_handle.state::<BackendProcess>();
-                if let Some(child) = state.0.lock().unwrap().take() {
+                let mut guard = state.0.lock().unwrap();
+                if let Some(child) = guard.take() {
                     let _ = child.kill();
                     println!("[AIWA Desktop] Backend sidecar terminated cleanly.");
                 }

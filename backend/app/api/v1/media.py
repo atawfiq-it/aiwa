@@ -1,5 +1,7 @@
+import logging
 import shutil
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
@@ -13,6 +15,9 @@ from app.database.models import Attachment, GeneratedFile, Task
 from app.services.media.comfyui import comfyui_adapter
 from app.services.media.diffusers_service import direct_diffusion
 from app.services.tasks.queue import task_queue
+
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter(prefix="/media", tags=["Media"], dependencies=[Depends(verify_local_token)])
 
@@ -37,12 +42,16 @@ class STTRequest(BaseModel):
 
 class DirectImageRequest(BaseModel):
     prompt: str = Field(min_length=1)
-    negative_prompt: str = "ugly, blurry, distorted, low quality"
+    negative_prompt: str = ""
     checkpoint_path: str
     width: int = 512
     height: int = 512
-    steps: int = 4
-    guidance_scale: float = 1.5
+    steps: int = 25  # Default 25 steps for high quality
+    guidance_scale: float = 7.0  # Default 7.0 for standard SD
+    sampler: str = "DPM++ 2M Karras"
+    seed: int = -1
+    batch_size: int = 1
+    style_preset: str = "none"
 
 
 @router.get("/diffusion/checkpoints")
@@ -53,7 +62,7 @@ def get_diffusion_checkpoints():
 
 @router.post("/diffusion/generate-direct")
 async def generate_image_direct(req: DirectImageRequest):
-    """Direct, synchronous image generation on dedicated GPU."""
+    """Direct high-quality image generation with sampler, seed, and style presets."""
     try:
         return await direct_diffusion.generate_image(
             prompt=req.prompt,
@@ -63,6 +72,10 @@ async def generate_image_direct(req: DirectImageRequest):
             height=req.height,
             steps=req.steps,
             guidance_scale=req.guidance_scale,
+            sampler=req.sampler,
+            seed=req.seed,
+            batch_size=req.batch_size,
+            style_preset=req.style_preset,
         )
     except Exception as e:
         raise HTTPException(
@@ -171,3 +184,25 @@ async def transcribe_audio_direct(
     finally:
         if temp_path.exists():
             temp_path.unlink()
+
+
+@router.delete("/files/{file_id}")
+def delete_generated_media_file(file_id: str, db: Session = Depends(get_db)):
+    """Deletes the physical image/audio file from disk and its metadata from SQLite."""
+    record = db.get(GeneratedFile, file_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Generated media file not found",
+        )
+
+    file_path = Path(record.file_path)
+    if file_path.exists():
+        try:
+            file_path.unlink()
+        except Exception as e:
+            logger.warning(f"Could not remove physical file {file_path}: {e}")
+
+    db.delete(record)
+    db.commit()
+    return {"status": "success", "message": f"Deleted {record.file_name}"}

@@ -158,11 +158,39 @@ workstation:
 install-comfyui checkpoints="":
     python3 scripts/setup_comfyui.py --checkpoints "{{checkpoints}}"
 
-# Package the folder-based Python sidecar runtime
+# Package Python folder-based sidecar runtime
 package-sidecar:
     python3 scripts/package_sidecar.py
 
-# Build native Linux standalone bundles (.AppImage and .deb)
-package-desktop: package-sidecar
-    cd apps/desktop && npm run build
-    cd apps/desktop && npx @tauri-apps/cli build
+# Build native Linux standalone installers (.AppImage & .deb)
+package-desktop:
+    bash scripts/build_desktop.sh
+
+# Remove build files from cached git
+clean-git-build:
+    git rm -r --cached \
+    apps/desktop/src-tauri/target/ \
+    apps/desktop/src-tauri/sidecar/ \
+    apps/desktop/src-tauri/binaries/ \
+    apps/desktop/dist/ \
+    backend/build/ \
+    backend/dist/ \
+    backend/*.spec \
+    data/database/*.db \
+    data/generated/* \
+    data/uploads/* \
+    data/.aiwa_session_token 2>/dev/null || true
+
+# Clean all build generated files from git and disk
+clean-all-build: clean-git-build
+    rm -rf apps/desktop/src-tauri/target/* \
+    apps/desktop/src-tauri/sidecar/* \
+    apps/desktop/src-tauri/binaries/* \
+    apps/desktop/dist/* \
+    backend/build/* \
+    backend/dist/* \
+    backend/*.spec \
+    data/database/*.db \
+    data/generated/* \
+    data/uploads/* \
+    data/.aiwa_session_token

@@ -41,5 +41,15 @@ python3 scripts/register_local_model.py \
   --name "Qwen3-VL-8B" \
   --ctx 4096
 
-# Build/Verify Build
+# Build/Verify Build of npm packages
 cd apps/desktop && npm run build && cd ../..
+
+# Make script executable
+chmod +x scripts/build_desktop.sh
+
+
+# Clear build cache
+just clean-git-build
+
+# Remove all build generated files from disk
+just clean-all-build

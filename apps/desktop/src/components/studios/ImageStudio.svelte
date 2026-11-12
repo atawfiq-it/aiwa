@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/components/studios/ImageStudio.svelte -->
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../../lib/api';
@@ -10,10 +9,27 @@
   let negativePrompt = 'ugly, blurry, distorted, bad anatomy, low quality';
   let width = 512;
   let height = 512;
-  let steps = 4;
+  let steps = 25;
+  let guidanceScale = 7.0;
+  let sampler = 'DPM++ 2M Karras';
+  let seed = -1;
+  let batchSize = 1;
+  let stylePreset = 'cinematic';
+
   let isGenerating = false;
-  let currentImage: { image_url: string; file_name: string; file_id?: string } | null = null;
+  let currentArtifacts: { file_id: string; file_name: string; image_url: string }[] = [];
+  let usedSeed: number | null = null;
   let history: any[] = [];
+
+  const samplers = ['DPM++ 2M Karras', 'Euler a', 'Euler', 'DDIM'];
+  const styles = [
+    { id: 'none', label: 'None' },
+    { id: 'cinematic', label: '🎬 Cinematic' },
+    { id: 'photorealistic', label: '📷 Photorealistic' },
+    { id: 'digital_art', label: '🎨 Digital Art' },
+    { id: 'anime', label: '✨ Anime' },
+    { id: 'fantasy', label: '🐉 Fantasy Art' },
+  ];
 
   async function loadCheckpoints() {
     const res = await apiFetch('/media/diffusion/checkpoints');
@@ -27,22 +43,14 @@
 
   async function loadHistory() {
     const res = await apiFetch('/media/gallery');
-    if (res.ok) {
-      history = await res.json();
-      // If no image is currently displayed, preview the latest creation
-      if (!currentImage && history.length > 0) {
-        currentImage = {
-          image_url: `http://127.0.0.1:8000/api/v1/media/files/${history[0].id}?token=${$sessionToken}`,
-          file_name: history[0].file_name,
-          file_id: history[0].id,
-        };
-      }
-    }
+    if (res.ok) history = await res.json();
   }
 
   async function generate() {
-    if (!promptText.trim() || !selectedCheckpoint) return;
+    if (!promptText.trim() || !selectedCheckpoint || isGenerating) return;
     isGenerating = true;
+    currentArtifacts = [];
+
     try {
       const res = await apiFetch('/media/diffusion/generate-direct', {
         method: 'POST',
@@ -54,26 +62,40 @@
           width,
           height,
           steps,
-          guidance_scale: steps <= 4 ? 1.0 : 7.0, // 1.0 for Turbo/Lightning, 7.0 for SD1.5
+          guidance_scale: guidanceScale,
+          sampler,
+          seed,
+          batch_size: batchSize,
+          style_preset: stylePreset,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        currentImage = {
-          file_name: data.file_name,
-          file_id: data.file_id,
-          image_url: `${data.image_url}?token=${$sessionToken}`,
-        };
-        await loadHistory();
+        currentArtifacts = data.artifacts;
+        usedSeed = data.seed;
+        loadHistory();
       } else {
         const err = await res.json();
-        alert(`Generation failed: ${err.detail || 'Unknown error'}`);
+        alert(`Generation failed: ${err.detail}`);
       }
     } catch (e: any) {
-      alert(`Error connecting to backend: ${e.message}`);
+      alert(`Error: ${e.message}`);
     } finally {
       isGenerating = false;
+    }
+  }
+
+  async function deleteImage(fileId: string) {
+    if (!confirm('Are you sure you want to permanently delete this image from your disk?')) return;
+    try {
+      const res = await apiFetch(`/media/files/${fileId}`, { method: 'DELETE' });
+      if (res.ok) {
+        history = history.filter((item) => item.id !== fileId);
+        currentArtifacts = currentArtifacts.filter((item) => item.file_id !== fileId);
+      }
+    } catch (e: any) {
+      alert(`Deletion failed: ${e.message}`);
     }
   }
 
@@ -83,148 +105,212 @@
   });
 </script>
 
-<div class="flex-1 flex overflow-hidden bg-slate-900">
-  <!-- Controls Sidebar (Left) -->
-  <div class="w-96 border-r border-slate-800 p-6 flex flex-col justify-between overflow-y-auto space-y-6 select-none">
+<div class="flex-1 flex overflow-hidden bg-[var(--bg-base)]">
+  <!-- Controls Panel (Left) -->
+  <div class="w-[420px] bg-[var(--bg-card)] border-r border-[var(--border-color)] p-6 flex flex-col justify-between overflow-y-auto space-y-6 shrink-0 select-none shadow-sm">
     <div class="space-y-5">
       <div>
-        <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
-          <span>🎨</span> Image Studio
-        </h2>
-        <p class="text-[11px] text-slate-400 mt-0.5">Direct PyTorch FP16 diffusion with 100% dedicated GPU VRAM.</p>
+        <h2 class="text-base font-bold text-[var(--text-main)]">🎨 Pro Diffusion Studio</h2>
+        <p class="text-[11px] text-[var(--text-muted)]">High-precision denoising, custom samplers & seed control.</p>
       </div>
 
-      <!-- Checkpoint Selector -->
+      <!-- Checkpoint Dropdown -->
       <div>
-        <label for="checkpoint-select" class="text-xs font-semibold text-slate-300 block mb-1">Model Checkpoint (.safetensors):</label>
+        <label for="checkpoint-select" class="text-xs font-semibold text-[var(--text-main)] block mb-1">Model Checkpoint:</label>
         <select
           id="checkpoint-select"
           bind:value={selectedCheckpoint}
-          class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+          class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs text-[var(--text-main)] focus:outline-none focus:border-[var(--accent)] font-mono"
         >
-          {#if checkpoints.length === 0}
-            <option value="">No checkpoints detected. Check DIFFUSION_MODEL_DIRECTORIES in .env</option>
-          {:else}
-            {#each checkpoints as ckpt}
-              <option value={ckpt.path}>
-                [{ckpt.folder}] {ckpt.name} — {ckpt.size_gb} GB
-              </option>
-            {/each}
-          {/if}
+          {#each checkpoints as ckpt}
+            <option value={ckpt.path}>[{ckpt.folder}] {ckpt.name} ({ckpt.size_gb} GB)</option>
+          {/each}
         </select>
       </div>
 
-      <!-- Prompt Input -->
+      <!-- Style Preset Pills -->
       <div>
-        <label for="prompt-input" class="text-xs font-semibold text-slate-300 block mb-1">Prompt:</label>
+        <span class="text-xs font-semibold text-[var(--text-main)] block mb-1.5">Style Preset:</span>
+        <div class="grid grid-cols-3 gap-1.5">
+          {#each styles as style}
+            <button
+              type="button"
+              on:click={() => (stylePreset = style.id)}
+              class={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition truncate ${
+                stylePreset === style.id
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                  : 'bg-[var(--bg-base)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'
+              }`}
+            >
+              {style.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Prompt -->
+      <div>
+        <label for="prompt-input" class="text-xs font-semibold text-[var(--text-main)] block mb-1">Prompt:</label>
         <textarea
           id="prompt-input"
           rows="3"
           bind:value={promptText}
-          placeholder="Describe your visual concept in detail..."
-          class="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+          placeholder="Describe your subject and scene in detail..."
+          class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-3 text-xs text-[var(--text-main)] focus:outline-none focus:border-[var(--accent)]"
         ></textarea>
       </div>
 
-      <!-- Negative Prompt Input -->
+      <!-- Negative Prompt -->
       <div>
-        <label for="neg-prompt-input" class="text-xs font-semibold text-slate-300 block mb-1">Negative Prompt:</label>
+        <label for="neg-prompt-input" class="text-xs font-semibold text-[var(--text-main)] block mb-1">Negative Prompt:</label>
         <input
           id="neg-prompt-input"
           type="text"
           bind:value={negativePrompt}
-          class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-300 focus:outline-none"
+          class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2 text-xs text-[var(--text-muted)] focus:outline-none"
         />
       </div>
 
-      <!-- Dimension Selector -->
-      <div>
-        <label class="text-xs font-semibold text-slate-300 block mb-1.5">Resolution:</label>
-        <div class="grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            on:click={() => { width = 512; height = 512; }}
-            class={`py-1.5 rounded-lg text-xs font-mono border transition ${width === 512 && height === 512 ? 'bg-indigo-600 border-indigo-500 text-white font-bold' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750'}`}
+      <!-- Sampler & Batch Size -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="sampler-select" class="text-xs font-semibold text-[var(--text-main)] block mb-1">Sampler:</label>
+          <select
+            id="sampler-select"
+            bind:value={sampler}
+            class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2 text-xs text-[var(--text-main)] focus:outline-none font-semibold"
           >
-            512×512
-          </button>
-          <button
-            type="button"
-            on:click={() => { width = 768; height = 512; }}
-            class={`py-1.5 rounded-lg text-xs font-mono border transition ${width === 768 && height === 512 ? 'bg-indigo-600 border-indigo-500 text-white font-bold' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750'}`}
+            {#each samplers as s}
+              <option value={s}>{s}</option>
+            {/each}
+          </select>
+        </div>
+
+        <div>
+          <label for="batch-select" class="text-xs font-semibold text-[var(--text-main)] block mb-1">Batch Count:</label>
+          <select
+            id="batch-select"
+            bind:value={batchSize}
+            class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2 text-xs text-[var(--text-main)] focus:outline-none"
           >
-            768×512
-          </button>
-          <button
-            type="button"
-            on:click={() => { width = 1024; height = 1024; }}
-            class={`py-1.5 rounded-lg text-xs font-mono border transition ${width === 1024 && height === 1024 ? 'bg-indigo-600 border-indigo-500 text-white font-bold' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750'}`}
-          >
-            1024×1024
-          </button>
+            <option value={1}>1 Image</option>
+            <option value={2}>2 Images</option>
+            <option value={4}>4 Images</option>
+          </select>
         </div>
       </div>
 
-      <!-- Steps Slider -->
-      <div>
-        <div class="flex justify-between text-xs text-slate-300 mb-1">
-          <span>Inference Steps:</span>
-          <span class="font-mono text-indigo-400 font-bold">{steps}</span>
+      <!-- Sliders: Steps & CFG -->
+      <div class="space-y-3 p-3 bg-[var(--bg-base)] rounded-xl border border-[var(--border-color)]">
+        <div>
+          <div class="flex justify-between text-xs text-[var(--text-main)] mb-1">
+            <span>Sampling Steps:</span>
+            <span class="font-mono text-indigo-500 font-bold">{steps}</span>
+          </div>
+          <input type="range" min="1" max="50" bind:value={steps} class="w-full accent-indigo-600 cursor-pointer" />
+          <p class="text-[10px] text-[var(--text-muted)]">20–30 steps recommended for crisp details.</p>
         </div>
-        <input type="range" min="1" max="25" bind:value={steps} class="w-full accent-indigo-600 cursor-pointer" />
-        <div class="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
-          <span>1-4 (Turbo/Lightning)</span>
-          <span>15-20 (SD 1.5)</span>
+
+        <div>
+          <div class="flex justify-between text-xs text-[var(--text-main)] mb-1">
+            <span>CFG Guidance Scale:</span>
+            <span class="font-mono text-indigo-500 font-bold">{guidanceScale.toFixed(1)}</span>
+          </div>
+          <input type="range" min="1" max="15" step="0.5" bind:value={guidanceScale} class="w-full accent-indigo-600 cursor-pointer" />
+          <p class="text-[10px] text-[var(--text-muted)]">7.0 standard for SD 1.5; 1.5–2.0 for Turbo/Lightning.</p>
+        </div>
+      </div>
+
+      <!-- Seed Control -->
+      <div>
+        <div class="flex justify-between items-center text-xs text-[var(--text-main)] mb-1">
+          <span class="font-semibold">Seed:</span>
+          {#if usedSeed !== null && seed === -1}
+            <span class="text-[10px] font-mono text-[var(--text-muted)]">Used: {usedSeed}</span>
+          {/if}
+        </div>
+        <div class="flex gap-2">
+          <input
+            type="number"
+            bind:value={seed}
+            placeholder="-1 for random seed"
+            class="flex-1 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2 text-xs font-mono text-[var(--text-main)] focus:outline-none"
+          />
+          <button
+            type="button"
+            on:click={() => (seed = -1)}
+            class="px-3 py-1.5 bg-[var(--bg-base)] hover:opacity-80 border border-[var(--border-color)] rounded-xl text-xs font-semibold"
+            title="Random Seed"
+          >
+            🎲 Random
+          </button>
         </div>
       </div>
     </div>
 
     <!-- Render Button -->
     <button
+      type="button"
       on:click={generate}
       disabled={isGenerating || !promptText.trim() || !selectedCheckpoint}
-      class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-bold text-white rounded-xl transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer"
+      style="background-color: var(--accent); color: var(--accent-text);"
+      class="w-full py-3.5 disabled:opacity-50 text-xs font-bold rounded-xl transition shadow-lg flex items-center justify-center gap-2 mt-4"
     >
       {#if isGenerating}
-        <span class="animate-spin text-base">🌀</span> Rendering on GPU...
+        <span class="animate-spin">🌀</span> Denoising on GPU ({steps} steps)...
       {:else}
-        ✨ Render Artwork
+        ✨ Render Artwork ({batchSize}x)
       {/if}
     </button>
   </div>
 
-  <!-- Canvas Display & Gallery (Right) -->
+  <!-- Canvas & Gallery (Right) -->
   <div class="flex-1 flex flex-col justify-between p-8 overflow-y-auto">
-    <!-- Active Art Canvas -->
-    <div class="flex-1 flex items-center justify-center border-2 border-dashed border-slate-800/80 rounded-2xl p-6 min-h-[460px] bg-slate-950/40">
+    <!-- Active Generation Canvas -->
+    <div class="flex-1 flex items-center justify-center border-2 border-dashed border-[var(--border-color)] rounded-2xl p-6 min-h-[440px] bg-[var(--bg-card)] shadow-sm">
       {#if isGenerating}
         <div class="text-center space-y-3">
           <div class="h-12 w-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p class="text-sm font-semibold text-slate-200">Rendering directly on GPU...</p>
-          <p class="text-xs text-slate-500 font-mono">diffusers.from_single_file(torch.float16)</p>
+          <p class="text-sm font-semibold text-[var(--text-main)]">Executing {sampler} ({steps} steps)...</p>
+          <p class="text-xs text-[var(--text-muted)]">Generating with full GPU allocation</p>
         </div>
-      {:else if currentImage}
-        <div class="text-center space-y-4 max-w-2xl">
-          <img
-            src={currentImage.image_url}
-            alt="Rendered Art"
-            class="rounded-2xl shadow-2xl max-h-[500px] max-w-full object-contain mx-auto border border-slate-700/80"
-          />
-          <div class="flex justify-center gap-3">
-            <a
-              href={currentImage.image_url}
-              download={currentImage.file_name}
-              class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-xl text-white transition flex items-center gap-2 shadow-lg shadow-indigo-600/20"
-            >
-              💾 Download Image
-            </a>
+      {:else if currentArtifacts.length > 0}
+        <div class="w-full space-y-4">
+          <!-- Grid for batch renders -->
+          <div class={`grid gap-4 mx-auto max-w-4xl ${currentArtifacts.length === 1 ? 'grid-cols-1 max-w-lg' : currentArtifacts.length === 2 ? 'grid-cols-2' : 'grid-cols-2'}`}>
+            {#each currentArtifacts as art}
+              <div class="space-y-2 text-center group">
+                <img
+                  src={`${art.image_url}?token=${$sessionToken}`}
+                  alt={art.file_name}
+                  class="rounded-xl shadow-xl max-h-[460px] object-contain mx-auto border border-[var(--border-color)] bg-black/10"
+                />
+                <div class="flex items-center justify-center gap-2 mt-2">
+                  <a
+                    href={`${art.image_url}?token=${$sessionToken}`}
+                    download={art.file_name}
+                    class="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition"
+                  >
+                    💾 Download ({art.file_name})
+                  </a>
+                  <button
+                      type="button"
+                      on:click={() => deleteImage(art.file_id)}
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl text-xs font-semibold transition"
+                      title="Delete image permanently"
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
+              </div>
+            {/each}
           </div>
         </div>
       {:else}
-        <div class="text-center text-slate-500 space-y-2 select-none">
-          <span class="text-5xl block">🎨</span>
-          <p class="text-sm font-medium">Ready to create</p>
-          <p class="text-xs text-slate-600">Select your checkpoint, type a prompt, and click Render.</p>
+        <div class="text-center text-[var(--text-muted)] space-y-2 select-none">
+          <span class="text-4xl">🎨</span>
+          <p class="text-sm font-medium text-[var(--text-main)]">Ready for high-fidelity generation</p>
+          <p class="text-xs">Pick a checkpoint, select a style, and click Render.</p>
         </div>
       {/if}
     </div>
@@ -232,22 +318,29 @@
     <!-- Recent Creations Gallery -->
     {#if history.length > 0}
       <div class="mt-8 space-y-3">
-        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider select-none">Recent Creations</h3>
+        <h3 class="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">Recent Creations</h3>
         <div class="grid grid-cols-8 gap-3">
           {#each history.slice(0, 8) as item}
-            <div
-              on:click={() => (currentImage = {
-                image_url: `http://127.0.0.1:8000/api/v1/media/files/${item.id}?token=${$sessionToken}`,
-                file_name: item.file_name,
-                file_id: item.id
-              })}
-              class="aspect-square bg-slate-800 rounded-xl overflow-hidden cursor-pointer border border-slate-700/60 hover:border-indigo-500 transition shadow group relative"
-            >
-              <img
-                src={`http://127.0.0.1:8000/api/v1/media/files/${item.id}?token=${$sessionToken}`}
-                alt="Creation Thumbnail"
-                class="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-              />
+            <div class="relative group aspect-square rounded-xl overflow-hidden border border-[var(--border-color)]">
+              <button
+                type="button"
+                on:click={() => (currentArtifacts = [{ file_id: item.id, file_name: item.file_name, image_url: `http://127.0.0.1:8000/api/v1/media/files/${item.id}` }])}
+                class="w-full h-full"
+              >
+                <img
+                  src={`http://127.0.0.1:8000/api/v1/media/files/${item.id}?token=${$sessionToken}`}
+                  alt="Thumbnail"
+                  class="w-full h-full object-cover"
+                />
+              </button>
+              <button
+                type="button"
+                on:click={() => deleteImage(item.id)}
+                class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 bg-black/70 hover:bg-rose-600 text-white rounded-lg text-[10px] transition"
+                title="Delete from disk"
+              >
+                ✕
+              </button>
             </div>
           {/each}
         </div>
