@@ -65,7 +65,7 @@ class AudioService:
             "segments": transcript_segments,
         }
 
-    def generate_speech(self, text: str, voice: str = "af_heart") -> Path:
+    def generate_speech(self, text: str, voice: str = "af_heart", speed: float = 1.0) -> Path:
         if not self.is_tts_available():
             raise RuntimeError(
                 "kokoro/soundfile is not installed. Install with: uv sync --extra audio"
@@ -74,14 +74,15 @@ class AudioService:
         import soundfile as sf
         from kokoro import KPipeline
 
-        logger.info(f"Synthesizing full speech ({len(text)} chars) with voice '{voice}'...")
+        logger.info(
+            f"Synthesizing speech ({len(text)} chars, speed {speed}x) with voice '{voice}'..."
+        )
         pipeline = KPipeline(lang_code="a")
-        generator = pipeline(text, voice=voice, speed=1.0)
+        generator = pipeline(text, voice=voice, speed=speed)
 
         out_filename = f"tts_{uuid.uuid4().hex[:8]}.wav"
         out_path = settings.GENERATED_DIR / out_filename
 
-        # Concatenate ALL audio chunks so full multi-paragraph text is synthesized
         audio_chunks = []
         for _, _, audio in generator:
             if audio is not None and len(audio) > 0:
@@ -92,9 +93,52 @@ class AudioService:
 
         full_audio = np.concatenate(audio_chunks)
         sf.write(str(out_path), full_audio, 24000)
+        return out_path
+
+    def generate_podcast_dialogue(
+        self,
+        script: list[dict[str, str]],
+        silence_ms: int = 350,
+        speed: float = 1.0,
+    ) -> Path:
+        """Synthesizes alternating multi-speaker lines and merges them into a single podcast episode."""
+        import numpy as np
+        import soundfile as sf
+        from kokoro import KPipeline
+
+        pipeline = KPipeline(lang_code="a")
+        sample_rate = 24000
+        silence_samples = int(sample_rate * (silence_ms / 1000.0))
+        silence_buffer = np.zeros(silence_samples, dtype=np.float32)
+
+        master_track = []
+
+        for turn in script:
+            speaker_voice = turn.get("voice", "am_adam")
+            speaker_text = turn.get("text", "").strip()
+            if not speaker_text:
+                continue
+
+            generator = pipeline(speaker_text, voice=speaker_voice, speed=speed)
+            turn_chunks = [
+                audio for _, _, audio in generator if audio is not None and len(audio) > 0
+            ]
+
+            if turn_chunks:
+                turn_audio = np.concatenate(turn_chunks)
+                master_track.append(turn_audio)
+                master_track.append(silence_buffer)
+
+        if not master_track:
+            raise RuntimeError("Podcast script contained no speakable dialogue.")
+
+        final_episode = np.concatenate(master_track)
+        out_filename = f"podcast_{uuid.uuid4().hex[:8]}.wav"
+        out_path = settings.GENERATED_DIR / out_filename
+        sf.write(str(out_path), final_episode, sample_rate)
 
         logger.info(
-            f"✅ Full audio synthesized ({round(len(full_audio) / 24000, 1)}s): {out_path.name}"
+            f"🎙️ Podcast generated ({round(len(final_episode) / sample_rate, 1)}s): {out_path.name}"
         )
         return out_path
 

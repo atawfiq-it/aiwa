@@ -22,17 +22,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/media", tags=["Media"], dependencies=[Depends(verify_local_token)])
 
 
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1)
+    voice: str = "af_heart"
+    speed: float = 1.0
+
+
+class PodcastTurn(BaseModel):
+    speaker: str
+    voice: str = "am_adam"
+    text: str
+
+
+class PodcastRequest(BaseModel):
+    script: list[PodcastTurn]
+    silence_ms: int = 350
+    speed: float = 1.0
+
+
 class ImageGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str = "ugly, blurry, distorted, low quality"
     width: int = 512
     height: int = 512
     steps: int = 20
-
-
-class TTSRequest(BaseModel):
-    text: str = Field(min_length=1)
-    voice: str = "af_heart"
 
 
 class STTRequest(BaseModel):
@@ -140,14 +153,46 @@ def create_text_to_speech(req: TTSRequest):
 
 @router.post("/audio/speech-direct")
 async def speech_direct(req: TTSRequest):
-    from app.services.media.audio_service import audio_service
+    """Synthesize speech immediately and return the playable audio file."""
+    try:
+        from app.services.media.audio_service import audio_service
 
-    out_path = audio_service.generate_speech(req.text, voice=req.voice)
-    return FileResponse(
-        path=str(out_path),
-        media_type="audio/wav",
-        filename=out_path.name,
-    )
+        out_path = audio_service.generate_speech(req.text, voice=req.voice, speed=req.speed)
+        return FileResponse(
+            path=str(out_path),
+            media_type="audio/wav",
+            filename=out_path.name,
+        )
+    except Exception as e:
+        logger.error(f"Speech synthesis error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Speech synthesis failed: {str(e)}",
+        ) from e
+
+
+@router.post("/audio/podcast")
+async def create_podcast(req: PodcastRequest):
+    """Synthesize a multi-speaker podcast episode."""
+    try:
+        from app.services.media.audio_service import audio_service
+
+        out_path = audio_service.generate_podcast_dialogue(
+            script=[t.model_dump() for t in req.script],
+            silence_ms=req.silence_ms,
+            speed=req.speed,
+        )
+        return FileResponse(
+            path=str(out_path),
+            media_type="audio/wav",
+            filename=out_path.name,
+        )
+    except Exception as e:
+        logger.error(f"Podcast generation error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Podcast generation failed: {str(e)}",
+        ) from e
 
 
 @router.post("/audio/transcribe", response_model=Task)
