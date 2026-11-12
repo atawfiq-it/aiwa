@@ -49,6 +49,51 @@
     }
   }
 
+  async function handleCsvUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+
+    const file = input.files[0];
+    const text = await file.text();
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const parsedTurns: { speaker: string; voice: string; text: string }[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Skip header
+      if (i === 0 && line.toLowerCase().includes('speaker')) continue;
+
+      // Handle simple CSV splitting
+      const parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map((p) => p.replace(/^"|"$/g, '').trim());
+      if (parts.length >= 3) {
+        parsedTurns.push({ speaker: parts[0], voice: parts[1], text: parts[2] });
+      } else if (parts.length === 2) {
+        parsedTurns.push({
+          speaker: parts[0],
+          voice: parts[0].toLowerCase().includes('host') ? 'am_adam' : 'bf_emma',
+          text: parts[1],
+        });
+      }
+    }
+
+    if (parsedTurns.length > 0) {
+      podcastTurns = parsedTurns;
+      alert(`Imported ${parsedTurns.length} dialogue turns from ${file.name}!`);
+    } else {
+      alert('Could not parse dialogue rows. Format: speaker,voice,text');
+    }
+  }
+
+  function downloadSampleCsv() {
+    const sample = `speaker,voice,text\nAdam (Host),am_adam,"Welcome to AIWA Workstation Podcast Episode 1."\nEmma (Guest),bf_emma,"Glad to be here. Today we are testing multi-line synthesis from CSV."\nAdam (Host),am_adam,"How does Kokoro process long paragraphs without crashing?"\nEmma (Guest),bf_emma,"It concatenates audio buffers seamlessly into a single master track."\n`;
+    const blob = new Blob([sample], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'podcast_template.csv';
+    a.click();
+  }
+
   function addLine() {
     podcastTurns = [...podcastTurns, { speaker: 'Speaker', voice: 'am_adam', text: '' }];
   }
@@ -64,7 +109,29 @@
       <h3 class="text-sm font-bold text-[var(--text-main)]">Dual-Speaker Podcast Generator</h3>
       <p class="text-xs text-[var(--text-muted)]">Alternating dialogue synthesized and merged into a continuous master episode.</p>
     </div>
-    <button on:click={addLine} class="px-3 py-1.5 bg-[var(--bg-base)] text-xs font-semibold rounded-lg border border-[var(--border-color)] text-[var(--text-main)]">+ Add Line</button>
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        on:click={downloadSampleCsv}
+        class="px-2.5 py-1.5 bg-[var(--bg-base)] text-xs font-semibold rounded-lg border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]"
+        title="Download sample CSV template"
+      >
+        📄 Template
+      </button>
+
+      <label class="px-3 py-1.5 bg-[var(--bg-base)] text-xs font-semibold rounded-lg border border-[var(--border-color)] text-[var(--text-main)] cursor-pointer hover:opacity-80 transition flex items-center gap-1.5">
+        📁 Import CSV
+        <input type="file" accept=".csv" on:change={handleCsvUpload} class="hidden" />
+      </label>
+
+      <button
+        type="button"
+        on:click={addLine}
+        class="px-3 py-1.5 bg-[var(--bg-base)] text-xs font-semibold rounded-lg border border-[var(--border-color)] text-[var(--text-main)] hover:opacity-80"
+      >
+        + Add Line
+      </button>
+    </div>
   </div>
 
   <div class="space-y-3 max-h-96 overflow-y-auto pr-1">

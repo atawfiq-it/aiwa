@@ -1,38 +1,38 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../../lib/api';
+  import SandboxFileExplorer from './agent/SandboxFileExplorer.svelte';
+  import VisualDagConsole from './agent/VisualDagConsole.svelte';
+  import { supervisorStatus } from '../../lib/stores';
 
   let agents: any[] = [];
   let selectedAgentId = '';
   let promptText = '';
+  let requireApproval = false;
   let isRunning = false;
-  let executionSteps: { type: string; title: string; content: string }[] = [];
-  let finalReport = '';
+  let currentRunId: string | null = null;
+  let dagNodes: any[] = [];
+  let activeApproval: any = null;
 
   async function loadAgents() {
     const res = await apiFetch('/agents');
     if (res.ok) {
       agents = await res.json();
-      if (agents.length > 0 && !selectedAgentId) {
-        selectedAgentId = agents[0].id;
-      }
+      if (agents.length > 0 && !selectedAgentId) selectedAgentId = agents[0].id;
     }
   }
 
   async function launchAgent() {
     if (!promptText.trim() || !selectedAgentId || isRunning) return;
     isRunning = true;
-    executionSteps = [];
-    finalReport = '';
-
-    const selectedAgent = agents.find((a) => a.id === selectedAgentId);
-    executionSteps = [{ type: 'info', title: 'Agent Initialized', content: `Started ${selectedAgent?.name}...` }];
+    dagNodes = [];
+    currentRunId = null;
 
     try {
       const response = await apiFetch(`/agents/${selectedAgentId}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptText, max_iterations: 5 }),
+        body: JSON.stringify({ prompt: promptText, require_human_approval: requireApproval }),
       });
 
       const reader = response.body?.getReader();
@@ -48,28 +48,12 @@
             try {
               const data = JSON.parse(line.slice(6).trim());
 
-              if (line.includes('tool_call_started')) {
-                executionSteps = [
-                  ...executionSteps,
-                  {
-                    type: 'tool_call',
-                    title: `Invoking Tool: ${data.tool}`,
-                    content: JSON.stringify(data.arguments, null, 2),
-                  },
-                ];
-              } else if (line.includes('tool_call_completed')) {
-                executionSteps = [
-                  ...executionSteps,
-                  {
-                    type: 'tool_result',
-                    title: `Tool Output (${data.tool})`,
-                    content: typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2),
-                  },
-                ];
-              } else if (data.final_answer) {
-                finalReport = data.final_answer;
-              } else if (data.error) {
-                executionSteps = [...executionSteps, { type: 'error', title: 'Execution Error', content: data.error }];
+              if (line.includes('agent_started')) {
+                currentRunId = data.run_id;
+              } else if (line.includes('dag_node')) {
+                dagNodes = [...dagNodes, data];
+              } else if (line.includes('approval_required')) {
+                activeApproval = data;
               }
             } catch {}
           }
@@ -83,109 +67,56 @@
   onMount(loadAgents);
 </script>
 
-<div class="flex-1 flex overflow-hidden bg-slate-900">
-  <!-- Left Agent Config Panel -->
-  <div class="w-96 border-r border-slate-800 p-6 flex flex-col justify-between overflow-y-auto space-y-6">
+<div class="flex-1 flex overflow-hidden bg-[var(--bg-base)]">
+  <!-- Left Config Panel -->
+  <div class="w-96 border-r border-[var(--border-color)] p-6 flex flex-col justify-between overflow-y-auto space-y-6 bg-[var(--bg-card)]">
     <div class="space-y-4">
       <div>
-        <h2 class="text-base font-bold text-slate-100">🤖 Autonomous Agent Studio</h2>
-        <p class="text-[11px] text-slate-400">Autonomous tool execution with Python sandbox & LanceDB.</p>
+        <h2 class="text-base font-bold text-[var(--text-main)]">🤖 Agent Studio Pro</h2>
+        <p class="text-[11px] text-[var(--text-muted)]">Visual DAG reasoning, sandbox breakpoints & tool calling.</p>
       </div>
 
-      <!-- Agent Selector -->
       <div>
-        <label for="agent-select" class="text-xs font-semibold text-slate-300 block mb-1">Select Scenario Agent:</label>
-        <select
-          id="agent-select"
-          bind:value={selectedAgentId}
-          class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-semibold"
-        >
+        <label for="agent-picker" class="text-xs font-semibold text-[var(--text-muted)] block mb-1">Scenario Agent:</label>
+        <select id="agent-picker" bind:value={selectedAgentId} class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs text-[var(--text-main)] font-semibold">
           {#each agents as a}
             <option value={a.id}>{a.name}</option>
           {/each}
         </select>
       </div>
 
-      <!-- Selected Agent Info Card -->
-      {#if selectedAgentId}
-        {@const activeAgent = agents.find((a) => a.id === selectedAgentId)}
-        <div class="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-2 text-xs">
-          <p class="text-slate-400 text-[11px]">{activeAgent?.description}</p>
-          <div class="flex items-center gap-1.5 pt-1 border-t border-slate-800/80">
-            <span class="text-slate-500 text-[10px]">Bound Tools:</span>
-            <span class="font-mono text-indigo-400 text-[10px]">{activeAgent?.tools_json}</span>
-          </div>
-        </div>
-      {/if}
+      <!-- Human Breakpoint Switch -->
+      <label class="flex items-center gap-2 text-xs text-[var(--text-main)] cursor-pointer select-none">
+        <input type="checkbox" bind:checked={requireApproval} class="rounded accent-indigo-600" />
+        <span>Pause for Approval before Code Execution (HITL)</span>
+      </label>
 
       <!-- Task Prompt -->
       <div>
-        <label for="agent-prompt" class="text-xs font-semibold text-slate-300 block mb-1">Task Assignment / Code to Review:</label>
-        <textarea
-          id="agent-prompt"
-          rows="5"
-          bind:value={promptText}
-          placeholder="e.g. Audit this Python function and test its speed:&#10;def fib(n): return n if n <= 1 else fib(n-1) + fib(n-2)"
-          class="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
-        ></textarea>
+        <label for="task-prompt" class="text-xs font-semibold text-[var(--text-muted)] block mb-1">Task Assignment:</label>
+        <textarea id="task-prompt" rows="5" bind:value={promptText} placeholder="Describe task or paste Python code to audit..." class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-3 text-xs font-mono text-[var(--text-main)]"></textarea>
       </div>
+
+      <SandboxFileExplorer activeRunId={currentRunId} />
     </div>
 
     <button
       on:click={launchAgent}
-      disabled={isRunning || !promptText.trim()}
-      class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-bold text-white rounded-xl transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
+      disabled={isRunning || !promptText.trim() || $supervisorStatus?.state !== 'Ready'}
+      class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-xs font-bold text-white rounded-xl shadow-md transition"
     >
-      {#if isRunning}
-        <span class="animate-spin">🌀</span> Agent Executing Tools...
+      {#if $supervisorStatus?.state !== 'Ready'}
+        ⚠️ Load Model in Header First
+      {:else if isRunning}
+        <span class="animate-spin">🌀</span> Agent Reasoning...
       {:else}
         🚀 Launch Autonomous Agent
       {/if}
     </button>
   </div>
 
-  <!-- Execution Console & Report (Right) -->
-  <div class="flex-1 flex flex-col justify-between p-8 overflow-y-auto space-y-6">
-    <div>
-      <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Live Execution Steps & Tool Calls</h3>
-
-      {#if executionSteps.length === 0}
-        <div class="border-2 border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-500 space-y-2">
-          <span class="text-3xl">⚙️</span>
-          <p class="text-sm font-medium">Console Idle</p>
-          <p class="text-xs text-slate-600">Select an agent scenario and launch an assignment.</p>
-        </div>
-      {:else}
-        <div class="space-y-3 font-mono text-xs">
-          {#each executionSteps as step}
-            <div class={`p-3.5 rounded-xl border ${
-              step.type === 'tool_call'
-                ? 'bg-indigo-950/20 border-indigo-500/50 text-indigo-300'
-                : step.type === 'tool_result'
-                ? 'bg-slate-950 border-slate-800 text-emerald-400'
-                : 'bg-slate-900 border-slate-800 text-slate-300'
-            }`}>
-              <div class="font-bold flex items-center gap-2 mb-1.5">
-                <span>{step.type === 'tool_call' ? '⚡' : step.type === 'tool_result' ? '📦' : 'ℹ️'}</span>
-                <span>{step.title}</span>
-              </div>
-              <pre class="whitespace-pre-wrap text-[11px] overflow-x-auto text-slate-300 p-2 bg-black/30 rounded-lg">{step.content}</pre>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <!-- Final Synthesized Report -->
-    {#if finalReport}
-      <div class="mt-8 bg-slate-950 border border-slate-800 rounded-2xl p-6 space-y-3">
-        <div class="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-wider">
-          <span>📋</span> Agent Final Synthesis & Audit Report
-        </div>
-        <div class="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed">
-          {finalReport}
-        </div>
-      </div>
-    {/if}
+  <!-- Right Visual DAG Console -->
+  <div class="flex-1 p-8 overflow-y-auto">
+    <VisualDagConsole {dagNodes} bind:activeApproval onDecision={() => {}} />
   </div>
 </div>

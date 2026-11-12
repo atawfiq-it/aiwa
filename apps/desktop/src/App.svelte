@@ -12,7 +12,6 @@
   import { apiFetch, ensureToken } from './lib/api';
   import {
     activeCharacterId,
-    activeConversationId,
     activeModelId,
     characters,
     conversations,

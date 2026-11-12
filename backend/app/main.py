@@ -1,5 +1,8 @@
 import asyncio
+import json
+from asyncio.log import logger
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,12 +28,69 @@ from app.core.security import (
     verify_local_token,
 )
 from app.database.engine import engine, run_migrations
-from app.database.models import ModelConfig
+from app.database.models import AppSetting, ModelConfig
 from app.database.seed_agents import seed_scenario_agents_if_empty
 from app.database.seed_characters import seed_characters_if_empty
+from app.services.models.scanner import model_scanner
 from app.services.tasks.queue import task_queue
 from app.supervisors.comfyui_supervisor import comfyui_supervisor
 from app.supervisors.model_supervisor import ModelState, model_supervisor
+
+
+async def auto_discover_and_register_models():
+    """Scans all configured directories and subdirectories on boot and registers any new GGUF models."""
+    logger.info("Scanning configured paths and subdirectories for GGUF models...")
+    search_paths = [str(settings.MODELS_DIR.resolve())]
+
+    with Session(engine) as db:
+        record = db.get(AppSetting, "model_search_directories")
+        if record and record.value:
+            try:
+                custom_dirs = json.loads(record.value)
+                for d in custom_dirs:
+                    if d not in search_paths and Path(d).exists():
+                        search_paths.append(d)
+            except Exception:
+                pass
+
+        # Run recursive scan
+        scanned = model_scanner.scan_directories(search_paths)
+        newly_registered = 0
+
+        for item in scanned:
+            if item.get("category") == "llm":
+                file_p = item["file_path"]
+                existing = db.exec(
+                    select(ModelConfig).where(ModelConfig.file_path == file_p)
+                ).first()
+                if not existing:
+                    new_model = ModelConfig(
+                        display_name=item["display_name"],
+                        file_path=file_p,
+                        mmproj_path=item.get("mmproj_path"),
+                        vision_supported=item.get("vision_supported", False),
+                        context_length=4096,
+                        gpu_layers=-1,
+                        is_default=False,
+                    )
+                    db.add(new_model)
+                    newly_registered += 1
+
+        db.commit()
+
+        # Ensure at least one model is marked default
+        default_model = db.exec(
+            select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
+        ).first()
+        if not default_model:
+            first_model = db.exec(select(ModelConfig)).first()
+            if first_model:
+                first_model.is_default = True
+                db.add(first_model)
+                db.commit()
+
+        if newly_registered > 0:
+            logger.info(f"✅ Auto-registered {newly_registered} newly discovered GGUF model(s).")
 
 
 async def auto_load_default_model():
@@ -51,12 +111,14 @@ async def auto_load_default_model():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup sequence
+    # Startup sequence - Runs on boot
     run_migrations()
     seed_characters_if_empty()
     seed_scenario_agents_if_empty()
-
+    asyncio.create_task(auto_discover_and_register_models())
+    asyncio.create_task(auto_load_default_model())
     token = generate_session_token()
+
     task_queue.start_worker()
 
     # Trigger background auto-load of default model

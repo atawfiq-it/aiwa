@@ -1,3 +1,5 @@
+import csv
+import io
 import logging
 import shutil
 import uuid
@@ -65,6 +67,59 @@ class DirectImageRequest(BaseModel):
     seed: int = -1
     batch_size: int = 1
     style_preset: str = "none"
+
+
+@router.post("/audio/podcast-csv")
+async def create_podcast_from_csv(
+    file: UploadFile,
+    silence_ms: int = 350,
+    speed: float = 1.0,
+):
+    """Parses a multi-line CSV file (speaker, voice, text) and synthesizes a continuous podcast episode."""
+    content = await file.read()
+    try:
+        decoded = content.decode("utf-8")
+    except UnicodeDecodeError:
+        decoded = content.decode("latin-1")
+
+    reader = csv.reader(io.StringIO(decoded))
+    script = []
+
+    for row in reader:
+        if not row or len(row) < 2:
+            continue
+        # Skip header row if present
+        if row[0].strip().lower() in ["speaker", "name"] and "text" in "".join(row).lower():
+            continue
+
+        if len(row) >= 3:
+            speaker, voice, text = row[0].strip(), row[1].strip(), row[2].strip()
+        else:
+            # Fallback if only 2 columns (speaker, text) -> auto-assign voice
+            speaker, text = row[0].strip(), row[1].strip()
+            voice = (
+                "am_adam" if "adam" in speaker.lower() or "host" in speaker.lower() else "bf_emma"
+            )
+
+        if text:
+            script.append({"speaker": speaker, "voice": voice, "text": text})
+
+    if not script:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CSV file contained no valid dialogue rows. Required columns: speaker, voice, text",
+        )
+
+    from app.services.media.audio_service import audio_service
+
+    out_path = audio_service.generate_podcast_dialogue(
+        script=script, silence_ms=silence_ms, speed=speed
+    )
+    return FileResponse(
+        path=str(out_path),
+        media_type="audio/wav",
+        filename=out_path.name,
+    )
 
 
 @router.get("/diffusion/checkpoints")

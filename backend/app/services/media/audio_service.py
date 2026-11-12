@@ -38,32 +38,81 @@ class AudioService:
             raise RuntimeError(
                 "faster-whisper is not installed. Install with: uv sync --extra audio"
             )
+        import subprocess
+
         from faster_whisper import WhisperModel
 
-        # Run on CPU with INT8 compute to prevent VRAM competition with LLM
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
-        segments, info = model.transcribe(str(audio_path), beam_size=5)
+        clean_wav_path = audio_path.with_suffix(".wav")
 
-        transcript_segments = []
-        full_text = []
+        # Convert webm/mp3/m4a to standard 16kHz mono WAV using ffmpeg if available
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(audio_path),
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(clean_wav_path),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
+            target_path = clean_wav_path
+        except Exception:
+            # If ffmpeg is not installed, feed original path directly to PyAV
+            target_path = audio_path
 
-        for seg in segments:
-            full_text.append(seg.text)
-            transcript_segments.append(
-                {
-                    "start": seg.start,
-                    "end": seg.end,
-                    "text": seg.text,
-                }
+        try:
+            logger.info(f"Loading Faster-Whisper ({model_size}) on CPU...")
+            try:
+                # Try INT8 first for 3x speedup on modern CPUs
+                model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            except Exception:
+                # Fallback to float32/default if CPU lacks int8 support
+                logger.info("INT8 not supported by CPU, falling back to float32...")
+                model = WhisperModel(model_size, device="cpu", compute_type="float32")
+
+            segments, info = model.transcribe(
+                str(target_path),
+                beam_size=5,
+                language="en",
+                condition_on_previous_text=False,
             )
 
-        return {
-            "language": info.language,
-            "language_probability": info.language_probability,
-            "duration": info.duration,
-            "text": " ".join(full_text).strip(),
-            "segments": transcript_segments,
-        }
+            transcript_segments = []
+            full_text = []
+
+            for seg in segments:
+                full_text.append(seg.text.strip())
+                transcript_segments.append(
+                    {
+                        "start": seg.start,
+                        "end": seg.end,
+                        "text": seg.text.strip(),
+                    }
+                )
+
+            transcribed = " ".join(full_text).strip()
+            logger.info(
+                f"✅ Transcription complete ({len(transcribed)} chars): '{transcribed[:60]}...'"
+            )
+
+            return {
+                "language": info.language,
+                "duration": info.duration,
+                "text": transcribed if transcribed else "[No speech detected in audio]",
+                "segments": transcript_segments,
+            }
+        finally:
+            if clean_wav_path.exists() and clean_wav_path != audio_path:
+                clean_wav_path.unlink()
 
     def generate_speech(self, text: str, voice: str = "af_heart", speed: float = 1.0) -> Path:
         if not self.is_tts_available():

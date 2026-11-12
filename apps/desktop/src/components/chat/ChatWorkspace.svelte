@@ -5,6 +5,7 @@
     activeCharacterId,
     activeConversationId,
     conversations,
+    supervisorStatus, // <-- Ensure imported here
   } from '../../lib/stores';
   import ChatHeader from './ChatHeader.svelte';
   import ChatSidebar from './ChatSidebar.svelte';
@@ -56,11 +57,21 @@
     const lastMsg = messages[messages.length - 1];
     if (lastMsg.role === 'assistant') {
       lastMsg.is_truncated = false;
-      handleSend('Please continue writing from exactly where you left off, without repeating yourself.', []);
+      handleSend(
+        'Please continue writing from exactly where you left off, without repeating yourself.',
+        []
+      );
     }
   }
 
   async function handleSend(text: string, images: string[]) {
+    // 1. Guard: Check if a model is loaded in VRAM
+    if ($supervisorStatus?.state !== 'Ready') {
+      alert('Cannot send message: No model is currently loaded in GPU VRAM. Please select a model in the header and click Apply.');
+      return;
+    }
+
+    // 2. Ensure an active conversation exists
     if (!$activeConversationId) {
       const convRes = await apiFetch('/conversations', {
         method: 'POST',
@@ -74,16 +85,18 @@
       }
     }
 
-    // Persist user prompt to SQLite
-    await apiFetch(`/conversations/${$activeConversationId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'user', content: text }),
-    });
+    // 3. Persist user prompt to SQLite
+    if ($activeConversationId) {
+      await apiFetch(`/conversations/${$activeConversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'user', content: text }),
+      });
 
-    apiFetch('/conversations').then(async (res) => {
-      if (res.ok) $conversations = await res.json();
-    });
+      apiFetch('/conversations').then(async (res) => {
+        if (res.ok) $conversations = await res.json();
+      });
+    }
 
     messages = [...messages, { role: 'user', content: text, image_paths: images }];
     isStreaming = true;
@@ -104,6 +117,13 @@
         }),
       });
 
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        messages[assistantIdx].content = `⚠️ Error: ${errData.detail || 'Inference engine error'}`;
+        messages = [...messages];
+        return;
+      }
+
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) return;
@@ -122,6 +142,10 @@
               }
               if (data.finish_reason === 'length') {
                 messages[assistantIdx].is_truncated = true;
+                messages = [...messages];
+              }
+              if (data.error) {
+                messages[assistantIdx].content = `⚠️ ${data.error}`;
                 messages = [...messages];
               }
             } catch {}
@@ -149,18 +173,32 @@
 </script>
 
 <div class="flex-1 flex overflow-hidden relative">
+  <!-- Left Conversation History Sidebar -->
   <ChatSidebar onSelectConversation={loadConversation} />
 
+  <!-- Center Chat Area -->
   <div class="flex-1 flex flex-col bg-[var(--bg-base)]">
-    <!-- Pass isPersonaPanelOpen to header -->
+    <!-- Header with Model & Persona Controls -->
     <ChatHeader bind:isPersonaPanelOpen />
 
+    <!-- Model Readiness Warning Banner -->
+    {#if $supervisorStatus?.state !== 'Ready'}
+      <div class="px-6 py-2 bg-amber-500/10 border-b border-amber-500/30 flex items-center justify-between text-xs text-amber-300 select-none">
+        <div class="flex items-center gap-2">
+          <span>⚠️</span>
+          <span><strong>No Model Loaded:</strong> Please select a model in the header and click <strong>Apply</strong> before chatting.</span>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Message Bubble List -->
     <MessageList
       {messages}
       onSelectQuickPrompt={populateQuickPrompt}
       onContinueMessage={continueLastMessage}
     />
 
+    <!-- Input Bar -->
     <InputBar
       {isStreaming}
       onSendMessage={handleSend}
@@ -173,7 +211,7 @@
     <button
       type="button"
       on:click={() => (isPersonaPanelOpen = true)}
-      class="absolute right-0 top-1/2 -translate-y-1/2 bg-[var(--bg-card)] border-l border-y border-[var(--border-color)] px-1.5 py-4 rounded-l-xl text-xs text-[var(--text-muted)] hover:text-indigo-400 hover:bg-[var(--bg-base)] shadow-lg transition flex flex-col items-center gap-1 z-10"
+      class="absolute right-0 top-1/2 -translate-y-1/2 bg-[var(--bg-card)] border-l border-y border-[var(--border-color)] px-1.5 py-4 rounded-l-xl text-xs text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-base)] shadow-lg transition flex flex-col items-center gap-1 z-10"
       title="Open Persona Profile"
     >
       <span>👤</span>
@@ -181,6 +219,6 @@
     </button>
   {/if}
 
-  <!-- Persona Presence Drawer -->
+  <!-- Persona Profile Drawer (Right) -->
   <PersonaPanel {isStreaming} bind:isOpen={isPersonaPanelOpen} />
 </div>
