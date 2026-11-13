@@ -183,7 +183,7 @@ clean-git-build:
 
 # Clean all build generated files from git and disk
 clean-all-build: clean-git-build
-    rm -rf apps/desktop/src-tauri/target/* \
+    rm -f apps/desktop/src-tauri/target/* \
     apps/desktop/src-tauri/sidecar/* \
     apps/desktop/src-tauri/binaries/* \
     apps/desktop/dist/* \
@@ -194,3 +194,9 @@ clean-all-build: clean-git-build
     data/generated/* \
     data/uploads/* \
     data/.aiwa_session_token
+
+# Completely wipe the SQLite database and re-seed fresh starter data
+db-reset:
+    rm -f data/database/aiwa.db data/database/aiwa.db-wal data/database/aiwa.db-shm
+    just migrate-up
+    uv run --project backend python -c "from app.database.seed_characters import seed_characters_if_empty; from app.database.seed_agents import seed_scenario_agents_if_empty; seed_characters_if_empty(); seed_scenario_agents_if_empty(); print('✅ Database wiped clean. Fresh starter personas and agents seeded.')"

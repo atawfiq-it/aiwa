@@ -2,6 +2,7 @@
   import { apiFetch } from '../../lib/api';
   import {
     activeCharacterId,
+    activeConversationId,
     activeModelId,
     characters,
     registeredModels,
@@ -11,10 +12,46 @@
   export let isPersonaPanelOpen: boolean = true;
 
   let selectedDropdownModelId = '';
+  let localPersonaId = '';
   let isSwitching = false;
 
   $: if ($activeModelId && !selectedDropdownModelId) {
     selectedDropdownModelId = $activeModelId;
+  }
+
+  // Reactive auto-initialization of persona
+  $: if ($characters.length > 0) {
+    const savedId = localStorage.getItem('aiwa_active_character_id');
+    const isValid = $characters.some((c) => c.id === localPersonaId);
+    if (!isValid) {
+      const target = $characters.find((c) => c.id === savedId) || $characters[0];
+      localPersonaId = target.id;
+      activeCharacterId.set(target.id);
+      localStorage.setItem('aiwa_active_character_id', target.id);
+      localStorage.setItem('aiwa_active_character_name', target.name);
+    }
+  }
+
+  function handlePersonaSelect(e: Event) {
+    const selectEl = e.target as HTMLSelectElement;
+    const chosenId = selectEl.value;
+    localPersonaId = chosenId;
+    activeCharacterId.set(chosenId);
+    localStorage.setItem('aiwa_active_character_id', chosenId);
+
+    const found = $characters.find((c) => c.id === chosenId);
+    if (found) {
+      localStorage.setItem('aiwa_active_character_name', found.name);
+      console.log(`[AIWA] Persona selected: '${found.name}' (ID: ${chosenId})`);
+    }
+
+    if ($activeConversationId) {
+      apiFetch(`/conversations/${$activeConversationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_id: chosenId }),
+      });
+    }
   }
 
   async function applyModelSwitch() {
@@ -31,6 +68,7 @@
       isSwitching = false;
     }
   }
+
 </script>
 
 <header class="h-14 border-b border-[var(--border-color)] px-6 flex items-center justify-between bg-[var(--bg-card)] select-none shadow-sm">
@@ -67,7 +105,8 @@
     <div class="flex items-center gap-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl px-3 py-1.5">
       <span class="text-xs text-[var(--text-muted)] font-medium">Persona:</span>
       <select
-        bind:value={$activeCharacterId}
+        value={localPersonaId}
+        on:change={handlePersonaSelect}
         class="bg-transparent text-xs text-[var(--text-main)] font-semibold focus:outline-none cursor-pointer"
       >
         {#each $characters as c}

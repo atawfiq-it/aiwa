@@ -1,29 +1,29 @@
 import base64
 import io
 import json
+import logging
 import mimetypes
-import random
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import logger
 from PIL import Image
-from sqlmodel import Session
+from sqlmodel import Session, select
 from sse_starlette.sse import ServerSentEvent
 
 from app.database.engine import engine
-from app.database.models import Character, Message
+from app.database.models import Character, Conversation, Message
 from app.schemas.chat import ChatMessage
 from app.services.embeddings.rag_service import rag_service
-from app.services.tasks.queue import task_queue
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
+logger = logging.getLogger(__name__)
 
-def file_to_data_url(file_path: str, max_dimension: int = 1096) -> str:
-    """Reads, downscales if necessary, and converts image to base64 Data URL."""
+
+def file_to_data_url(file_path: str, max_dimension: int = 1024) -> str:
+    """Reads, resizes to prevent VLM token blowout, and encodes image as Base64 Data URL."""
     path = Path(file_path).resolve()
     mime_type, _ = mimetypes.guess_type(path)
     if not mime_type:
@@ -48,6 +48,7 @@ def format_messages_for_llm(
     messages: list[ChatMessage],
     knowledge_base_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Formats messages for llama.cpp OpenAI endpoint with RAG context and Base64 images."""
     formatted = []
 
     rag_context = ""
@@ -85,70 +86,93 @@ def format_messages_for_llm(
     return formatted
 
 
-def should_generate_image(mode: str, user_prompt: str) -> bool:
-    """Evaluates whether to generate an image based on the selected mode."""
-    if mode == "definitely":
-        return True
-    if mode == "probable":
-        visual_triggers = [
-            "draw",
-            "picture",
-            "image",
-            "scene",
-            "illustration",
-            "painting",
-            "visualize",
-            "photo",
-        ]
-        has_keywords = any(w in user_prompt.lower() for w in visual_triggers)
-        return has_keywords or (random.random() < 0.5)
-    return False
-
-
 async def stream_chat_completion(
     messages: list[ChatMessage],
     conversation_id: str | None = None,
     character_id: str | None = None,
+    character_name: str | None = None,
     image_gen_mode: str = "none",
     knowledge_base_id: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 4096,
 ) -> AsyncGenerator[ServerSentEvent, None]:
+    """Streams chat completions from llama-server, enforcing character personas and logging."""
     if model_supervisor.state != ModelState.READY or not model_supervisor.active_model:
-        err_msg = f"Model is not ready (current state: {model_supervisor.state.value})"
+        err_msg = (
+            "No language model is currently loaded in GPU VRAM. "
+            "Please select a model from the top header and click 'Apply'."
+        )
         yield ServerSentEvent(event="error", data=json.dumps({"error": err_msg}))
         return
 
     has_images = any(len(m.image_paths or []) > 0 for m in messages)
     if has_images and not model_supervisor.active_model.vision_supported:
         err_msg = (
-            f"Active model '{model_supervisor.active_model.display_name}' does not support vision"
+            f"Active model '{model_supervisor.active_model.display_name}' "
+            "does not support vision. Please load a multimodal model with mmproj."
         )
         yield ServerSentEvent(event="error", data=json.dumps({"error": err_msg}))
         return
 
-    # Apply Persona / Character settings if provided
-    if character_id:
-        with Session(engine) as db:
-            char = db.get(Character, character_id)
-            if char:
-                logger.info(f"🎭 Activating Persona: '{char.name}' (Temp: {char.temperature})")
-                messages = [ChatMessage(role="system", content=char.system_prompt)] + [
-                    m for m in messages if m.role != "system"
-                ]
-                temperature = char.temperature
+    # --- RESOLVE PERSONA WITH MULTI-TIER FALLBACK ---
+    active_char_name = "None (Default Assistant)"
+    active_prompt_text = ""
 
-    # Apply guidance when image generation is requested
-    if image_gen_mode == "definitely":
-        guidance = (
-            "\nNote: The user requested image generation. Provide a concise, creative response. "
-            "Do NOT attempt to draw text diagrams, ascii art, or icon grids; the image will "
-            "be generated and displayed by the system automatically."
-        )
-        if messages and messages[0].role == "system":
-            messages[0].content += f"\n{guidance}"
-        else:
-            messages = [ChatMessage(role="system", content=guidance)] + messages
+    with Session(engine) as db:
+        char = None
+
+        # 1. Resolve by character_id (UUID or name string)
+        if character_id:
+            char = db.get(Character, character_id)
+            if not char:
+                char = db.exec(select(Character).where(Character.name == character_id)).first()
+
+        # 2. Resolve by character_name
+        if not char and character_name:
+            char = db.exec(select(Character).where(Character.name == character_name)).first()
+
+        # 3. Resolve from active conversation in SQLite
+        if not char and conversation_id:
+            conv = db.get(Conversation, conversation_id)
+            if conv and conv.character_id:
+                char = db.get(Character, conv.character_id)
+
+        # 4. Fallback to default first character
+        if not char:
+            char = db.exec(select(Character)).first()
+
+        if char:
+            active_char_name = char.name
+            active_prompt_text = char.system_prompt
+            temperature = char.temperature
+
+            persona_instruction = (
+                f"### SYSTEM INSTRUCTION: MANDATORY ROLEPLAY AS {char.name.upper()} ###\n"
+                f"{char.system_prompt}\n"
+                f"### END SYSTEM INSTRUCTION - MAINTAIN THIS PERSONA STRICTLY ###"
+            )
+
+            # Strip existing system prompts and place authoritative persona directive first
+            messages = [ChatMessage(role="system", content=persona_instruction)] + [
+                m for m in messages if m.role != "system"
+            ]
+
+    # --- HIGH-VISIBILITY DIAGNOSTIC LOGGING ---
+    print("\n" + "=" * 65)
+    print("🎭 [AIWA PERSONA DIAGNOSTICS]")
+    print(f"   -> Character ID received:   {character_id}")
+    print(f"   -> Character Name received: {character_name}")
+    print(f"   -> Resolved Active Persona: {active_char_name}")
+    print(f"   -> Applied Temperature:     {temperature}")
+    print(f"   -> System Prompt Preview:   {active_prompt_text[:110]}...")
+    print("-" * 65)
+    formatted_payload = format_messages_for_llm(messages, knowledge_base_id)
+    print("📨 [PAYLOAD DISPATCHED TO LLAMA-SERVER]:")
+    for idx, msg in enumerate(formatted_payload):
+        role = msg.get("role", "unknown")
+        content_preview = str(msg.get("content", ""))[:130].replace("\n", " ")
+        print(f"   [{idx}] Role: {role:<9} | Content: {content_preview}...")
+    print("=" * 65 + "\n")
 
     await model_supervisor.slot_semaphore.acquire()
     model_supervisor.active_requests += 1
@@ -160,19 +184,22 @@ async def stream_chat_completion(
     try:
         url = f"{model_supervisor.base_url}/v1/chat/completions"
         payload = {
-            "messages": format_messages_for_llm(messages, knowledge_base_id),
+            "messages": formatted_payload,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
         }
 
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        # Infinite streaming read timeout so long answers never cut off at 120s
+        timeout_config = httpx.Timeout(connect=15.0, read=None, write=30.0, pool=None)
+
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             async with client.stream("POST", url, json=payload) as response:
                 if response.status_code != 200:
                     err_body = await response.aread()
                     yield ServerSentEvent(
                         event="error",
-                        data=json.dumps({"error": f"Inference error: {err_body.decode()}"}),
+                        data=json.dumps({"error": f"Inference engine error: {err_body.decode()}"}),
                     )
                     return
 
@@ -197,7 +224,6 @@ async def stream_chat_completion(
                                     data=json.dumps({"text": content}),
                                 )
 
-                            # Emit finish reason (e.g. "length" vs "stop")
                             if finish_reason:
                                 yield ServerSentEvent(
                                     event="message_end",
@@ -206,6 +232,7 @@ async def stream_chat_completion(
                         except json.JSONDecodeError:
                             continue
 
+        # Persist completed assistant response to SQLite database
         if conversation_id and accumulated_response:
             full_text = "".join(accumulated_response)
             with Session(engine) as db:
@@ -218,24 +245,11 @@ async def stream_chat_completion(
                 )
                 db.commit()
 
-        yield ServerSentEvent(event="message_end", data=json.dumps({"finish_reason": "stop"}))
+        yield ServerSentEvent(
+            event="message_end",
+            data=json.dumps({"finish_reason": "stop"}),
+        )
 
-        # Autonomous in-chat image generation via ComfyUI
-        last_user_prompt = next((m.content for m in reversed(messages) if m.role == "user"), "")
-        if should_generate_image(image_gen_mode, last_user_prompt):
-            image_task = task_queue.submit_task(
-                task_type="image_generation",
-                parameters={
-                    "prompt": f"cinematic digital art of {last_user_prompt[:250]}",
-                    "width": 512,
-                    "height": 512,
-                    "steps": 4,
-                },
-            )
-            yield ServerSentEvent(
-                event="image_generation_started",
-                data=json.dumps({"task_id": image_task.id}),
-            )
     except Exception as e:
         yield ServerSentEvent(event="error", data=json.dumps({"error": str(e)}))
     finally:

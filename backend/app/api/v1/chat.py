@@ -14,6 +14,9 @@ async def chat_completions(req: ChatRequest):
         stream_chat_completion(
             messages=req.messages,
             conversation_id=req.conversation_id,
+            character_id=req.character_id,
+            character_name=req.character_name,
+            image_gen_mode=req.image_gen_mode,
             knowledge_base_id=req.knowledge_base_id,
             temperature=req.temperature,
             max_tokens=req.max_tokens,

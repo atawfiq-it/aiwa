@@ -1,5 +1,6 @@
 <script lang="ts">
   import { apiFetch } from '../../../lib/api';
+  import { marked } from 'marked';
 
   export let dagNodes: {
     node_id: string;
@@ -11,6 +12,7 @@
     duration_ms?: number;
     status: string;
   }[] = [];
+  export let finalReport: string = '';
   export let activeApproval: { run_id: string; tool_name: string; arguments: any } | null = null;
   export let onDecision: () => void;
 
@@ -119,6 +121,18 @@
           </div>
         </div>
       {/each}
+    </div>
+  {/if}
+
+
+  {#if finalReport}
+    <div class="mt-8 bg-[var(--bg-card)] border-2 border-indigo-500/40 rounded-2xl p-6 shadow-xl space-y-4">
+      <div class="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-wider">
+        <span>📋</span> Agent Final Synthesis & Audit Report
+      </div>
+      <div class="prose prose-sm max-w-none text-[var(--text-main)] prose-pre:bg-[var(--bg-base)]">
+        {@html marked.parse(finalReport)}
+      </div>
     </div>
   {/if}
 </div>

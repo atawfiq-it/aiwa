@@ -10,6 +10,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
     character_id: str | None = None
+    character_name: str | None = None  # Fallback name matching
     image_gen_mode: str = "none"
     knowledge_base_id: str | None = None
     messages: list[ChatMessage]

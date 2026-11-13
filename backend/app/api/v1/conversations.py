@@ -22,7 +22,8 @@ class ConversationCreate(BaseModel):
 
 
 class ConversationUpdate(BaseModel):
-    title: str
+    title: str | None = None
+    character_id: str | None = None
 
 
 class MessageCreate(BaseModel):
@@ -83,7 +84,12 @@ def rename_conversation(
     conv = db.get(Conversation, conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    conv.title = req.title.strip() or "Untitled Conversation"
+
+    if req.title is not None:
+        conv.title = req.title.strip() or "Untitled Conversation"
+    if req.character_id is not None:
+        conv.character_id = req.character_id
+
     conv.updated_at = datetime.now(UTC)
     db.add(conv)
     db.commit()
