@@ -115,7 +115,7 @@ The creator and contributors of AIWA provide this software on an *"as is"* basis
 AIWA enforces clean separation between application logic, runtime orchestration, and presentation:
 
 ```text
-local-ai-workstation/
+aiwa/
 ├── apps/
 │   └── desktop/               # Tauri v2 Desktop Shell
 │       ├── src/               # Svelte + TypeScript + Tailwind CSS Frontend
@@ -165,8 +165,8 @@ sudo apt update && sudo apt install -y libsndfile1 ffmpeg build-essential curl
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/aiwa-workstation.git
-cd aiwa-workstation
+git clone https://github.com/atawfiq-it/aiwa.git
+cd aiwa
 ```
 
 ### 2. Install Dependencies (Single Command)
@@ -256,11 +256,11 @@ AIWA is actively evolving, and contributions from the developer and AI research 
 - [ ] HuggingFace GGUF one-click in-app downloader polish.
 
 ### Ways to Contribute:
-1. **Report Bugs & Suggest Features**: Open an [Issue](https://github.com/your-username/aiwa-workstation/issues).
+1. **Report Bugs & Suggest Features**: Open an [Issue](https://github.com/atawfiq-it/aiwa/issues).
 2. **Submit Pull Requests**: Fork the repository, create your feature branch, and submit a PR!
 3. **Model Presets**: Share tested prompt templates and parameter profiles for new GGUF / diffusion models.
 
 ### Get in Touch:
-* **Creator**: [Ahmed Tawfiq]
+* **Creator**: Ahmed Tawfiq
 * **GitHub**: [@atawfiq-it](https://github.com/atawfiq-it)
 * **LinkedIn**: [linkedin.com/in/amtawfiq](https://linkedin.com/in/amtawfiq)
