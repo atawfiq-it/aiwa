@@ -123,7 +123,7 @@
           class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs text-[var(--text-main)] focus:outline-none focus:border-[var(--accent)] font-mono"
         >
           {#each checkpoints as ckpt}
-            <option value={ckpt.path}>[{ckpt.folder}] {ckpt.name} ({ckpt.size_gb} GB)</option>
+            <option value={ckpt.path}>{ckpt.name} ({ckpt.size_gb} GB)</option>
           {/each}
         </select>
       </div>

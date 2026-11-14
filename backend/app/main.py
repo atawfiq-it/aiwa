@@ -2,6 +2,7 @@ import asyncio
 import json
 from asyncio.log import logger
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -109,10 +110,34 @@ async def auto_load_default_model():
                 print(f"[AIWA] ⚠️ Failed auto-loading default model: {e}")
 
 
+def check_and_record_app_version():
+    """Records application schema version into SQLite app_settings to detect breaking updates."""
+    with Session(engine) as db:
+        record = db.get(AppSetting, "app_schema_version")
+        if not record:
+            record = AppSetting(
+                key="app_schema_version",
+                value=settings.VERSION,
+            )
+            db.add(record)
+            logger.info(f"💾 Initialized database schema version: {settings.VERSION}")
+        else:
+            if record.value != settings.VERSION:
+                logger.warning(
+                    f"⚠️ Application version updated from {record.value} to {settings.VERSION}. "
+                    "Verifying Alembic schema integrity..."
+                )
+                record.value = settings.VERSION
+                record.updated_at = datetime.now(UTC)
+                db.add(record)
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup sequence - Runs on boot
     run_migrations()
+    check_and_record_app_version()  # Track version in SQLite database
     seed_characters_if_empty()
     seed_scenario_agents_if_empty()
     asyncio.create_task(auto_discover_and_register_models())

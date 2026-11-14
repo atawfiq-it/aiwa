@@ -214,3 +214,17 @@ class Character(SQLModel, table=True):
     temperature: float = Field(default=0.7)
     is_builtin: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class AgentRunRecord(SQLModel, table=True):
+    __tablename__ = "agent_runs"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    title: str = Field(default="Untitled Agent Task", index=True)
+    agent_id: str = Field(foreign_key="agents.id", index=True)
+    agent_name: str
+    prompt: str
+    dag_nodes_json: str = Field(default="[]")
+    final_report: str = Field(default="")
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)

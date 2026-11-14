@@ -6,7 +6,6 @@
     activeConversationId,
     characters,
     conversations,
-    supervisorStatus,
   } from '../../lib/stores';
   import ChatHeader from './ChatHeader.svelte';
   import ChatSidebar from './ChatSidebar.svelte';
@@ -185,53 +184,46 @@
   });
 </script>
 
-<div class="flex-1 flex overflow-hidden relative">
-  <!-- Conversation History Sidebar -->
+<div class="flex-1 flex overflow-hidden">
+  <!-- Left Conversation Sidebar -->
   <ChatSidebar onSelectConversation={loadConversation} />
 
-  <!-- Center Chat Space -->
+  <!-- Main Center Column -->
   <div class="flex-1 flex flex-col bg-[var(--bg-base)] overflow-hidden">
-    <!-- Header with Model & Persona Selectors -->
+    <!-- Top Header -->
     <ChatHeader bind:isPersonaPanelOpen />
 
-    <!-- No Model Warning Banner -->
-    {#if $supervisorStatus?.state !== 'Ready'}
-      <div class="px-6 py-2.5 bg-amber-500/10 border-t border-b border-amber-500/30 flex items-center justify-between text-xs text-amber-300 select-none shrink-0">
-        <div class="flex items-center gap-2">
-          <span>⚠️</span>
-          <span><strong>No Model Loaded:</strong> Please select a model in the header and click <strong>Apply</strong> before chatting.</span>
-        </div>
-      </div>
-    {/if}
+    <!-- Middle Workspace: MessageList & PersonaPanel strictly between Header and InputBar -->
+    <div class="flex-1 flex overflow-hidden relative">
+      <MessageList
+        {messages}
+        onSelectQuickPrompt={populateQuickPrompt}
+        onContinueMessage={continueLastMessage}
+        onReloadMessages={() => $activeConversationId && loadConversation($activeConversationId)}
+      />
 
-    <!-- Message Bubble List -->
-    <MessageList
-      {messages}
-      onSelectQuickPrompt={populateQuickPrompt}
-      onContinueMessage={continueLastMessage}
-    />
+      <!-- Aside element scoped strictly between header and input bar -->
+      <PersonaPanel {isStreaming} bind:isOpen={isPersonaPanelOpen} />
 
-    <!-- Input Bar with Morphing Stop Button -->
+      <!-- Re-open pill on right edge if collapsed -->
+      {#if !isPersonaPanelOpen}
+        <button
+          type="button"
+          on:click={() => (isPersonaPanelOpen = true)}
+          class="absolute right-0 top-1/2 -translate-y-1/2 bg-[var(--bg-card)] border-l border-y border-[var(--border-color)] px-1.5 py-4 rounded-l-xl text-xs text-[var(--text-muted)] hover:text-indigo-400 hover:bg-[var(--bg-base)] shadow-lg transition flex flex-col items-center gap-1 z-10"
+          title="Open Persona Profile"
+        >
+          <span>👤</span>
+          <span class="text-[9px] font-mono [writing-mode:vertical-lr]">PERSONA</span>
+        </button>
+      {/if}
+    </div>
+
+    <!-- Bottom Input Bar -->
     <InputBar
       {isStreaming}
       onSendMessage={handleSend}
       onStopGeneration={stopGeneration}
     />
   </div>
-
-  <!-- Collapsed Tab to Restore Persona Panel on Right Edge -->
-  {#if !isPersonaPanelOpen}
-    <button
-      type="button"
-      on:click={() => (isPersonaPanelOpen = true)}
-      class="absolute right-0 top-1/2 -translate-y-1/2 bg-[var(--bg-card)] border-l border-y border-[var(--border-color)] px-1.5 py-4 rounded-l-xl text-xs text-[var(--text-muted)] hover:text-indigo-400 hover:bg-[var(--bg-base)] shadow-lg transition flex flex-col items-center gap-1 z-10 select-none"
-      title="Open Persona Profile"
-    >
-      <span>👤</span>
-      <span class="text-[9px] font-mono [writing-mode:vertical-lr]">PERSONA</span>
-    </button>
-  {/if}
-
-  <!-- Persona Drawer -->
-  <PersonaPanel {isStreaming} bind:isOpen={isPersonaPanelOpen} />
 </div>

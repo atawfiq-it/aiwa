@@ -46,10 +46,13 @@ class AgentRunner:
         with Session(engine) as db:
             agent = db.get(Agent, agent_id)
             if not agent:
-                yield ServerSentEvent(event="error", data=json.dumps({"error": "Agent not found."}))
+                yield ServerSentEvent(
+                    event="error",
+                    data=json.dumps({"error": "Agent configuration not found."}),
+                )
                 return
 
-        allowed_tools = json.loads(agent.tools_json)
+        allowed_tools = json.loads(agent.tools_json) if agent.tools_json else []
         tools_schema = get_openai_tools_schema(allowed_tools)
 
         messages: list[dict[str, Any]] = [
@@ -57,6 +60,7 @@ class AgentRunner:
             {"role": "user", "content": user_prompt},
         ]
 
+        # 1. Emit Agent Initialized Event
         yield ServerSentEvent(
             event="agent_started",
             data=json.dumps(
@@ -69,7 +73,41 @@ class AgentRunner:
             ),
         )
 
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        # 2. Emit Goal Node
+        yield ServerSentEvent(
+            event="dag_node",
+            data=json.dumps(
+                {
+                    "node_id": "step_goal",
+                    "node_type": "goal",
+                    "title": "🎯 Task Goal",
+                    "content": user_prompt,
+                    "status": "completed",
+                }
+            ),
+        )
+
+        # 3. Emit Planning Strategy Node
+        yield ServerSentEvent(
+            event="dag_node",
+            data=json.dumps(
+                {
+                    "node_id": "step_plan",
+                    "node_type": "planning",
+                    "title": f"🧠 Strategy: {agent.name}",
+                    "content": (
+                        f"Initializing reasoning loop with bound tools: "
+                        f"{', '.join(allowed_tools) if allowed_tools else 'None'}. "
+                        "Evaluating constraints and test boundaries..."
+                    ),
+                    "status": "completed",
+                }
+            ),
+        )
+
+        timeout_config = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=None)
+
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             for iteration in range(max_iterations):
                 step_id = f"step_{iteration + 1}"
                 t0 = time.time()
@@ -82,14 +120,24 @@ class AgentRunner:
                     "stream": False,
                 }
 
-                res = await client.post(
-                    f"{model_supervisor.base_url}/v1/chat/completions",
-                    json=payload,
-                )
+                try:
+                    res = await client.post(
+                        f"{model_supervisor.base_url}/v1/chat/completions",
+                        json=payload,
+                    )
+                except Exception as e:
+                    yield ServerSentEvent(
+                        event="error",
+                        data=json.dumps({"error": f"Failed connecting to model: {e}"}),
+                    )
+                    return
+
                 if res.status_code != 200:
                     yield ServerSentEvent(
                         event="error",
-                        data=json.dumps({"error": f"LLM error: {res.text}"}),
+                        data=json.dumps(
+                            {"error": f"LLM error (HTTP {res.status_code}): {res.text}"}
+                        ),
                     )
                     return
 
@@ -98,6 +146,7 @@ class AgentRunner:
                 content = choice.get("content", "") or ""
                 tool_calls = choice.get("tool_calls", [])
 
+                # If the agent decided to call one or more tools
                 if tool_calls:
                     for tc in tool_calls:
                         func_name = tc["function"]["name"]
@@ -108,14 +157,14 @@ class AgentRunner:
                         except json.JSONDecodeError:
                             args = {"code": raw_args}
 
-                        # 1. Emit DAG node: Tool Invocation
+                        # Emit Tool Call Action Node
                         yield ServerSentEvent(
                             event="dag_node",
                             data=json.dumps(
                                 {
                                     "node_id": f"{step_id}_tool",
                                     "node_type": "tool_call",
-                                    "title": f"Action: {func_name}",
+                                    "title": f"⚡ Action: {func_name}",
                                     "tool_name": func_name,
                                     "arguments": args,
                                     "status": "running",
@@ -123,7 +172,7 @@ class AgentRunner:
                             ),
                         )
 
-                        # 2. Check Human-in-the-Loop Breakpoint
+                        # Check Human-in-the-Loop Breakpoint
                         if require_human_approval:
                             yield ServerSentEvent(
                                 event="approval_required",
@@ -136,7 +185,7 @@ class AgentRunner:
                                 ),
                             )
 
-                            # Wait for human response
+                            # Wait for user decision
                             event = asyncio.Event()
                             PENDING_APPROVALS[run_id] = event
                             try:
@@ -144,7 +193,9 @@ class AgentRunner:
                             except TimeoutError:
                                 yield ServerSentEvent(
                                     event="error",
-                                    data=json.dumps({"error": "Approval timed out after 120s."}),
+                                    data=json.dumps(
+                                        {"error": "Human approval timed out after 120s."}
+                                    ),
                                 )
                                 return
                             finally:
@@ -157,33 +208,34 @@ class AgentRunner:
                                 if "modified_args" in decision:
                                     args = decision["modified_args"]
 
-                        # 3. Execute Tool inside workspace
+                        # Execute registered tool
                         tool_def = TOOL_REGISTRY.get(func_name)
                         if not tool_def:
-                            tool_result = f"Error: Tool '{func_name}' not registered."
+                            tool_result = f"Error: Tool '{func_name}' is not registered."
                         else:
                             try:
                                 tool_result = tool_def.handler(**args)
                             except Exception as e:
                                 tool_result = f"Execution error: {e}"
 
-                        duration = round((time.time() - t0) * 1000)
+                        duration_ms = round((time.time() - t0) * 1000)
 
-                        # 4. Emit DAG node: Tool Observation
+                        # Emit Observation Node
                         yield ServerSentEvent(
                             event="dag_node",
                             data=json.dumps(
                                 {
                                     "node_id": f"{step_id}_obs",
                                     "node_type": "observation",
-                                    "title": f"Observation ({func_name})",
+                                    "title": f"📦 Observation ({func_name})",
                                     "output": tool_result,
-                                    "duration_ms": duration,
+                                    "duration_ms": duration_ms,
                                     "status": "completed",
                                 }
                             ),
                         )
 
+                        # Append results to message context
                         messages.append(
                             {
                                 "role": "assistant",
@@ -200,22 +252,37 @@ class AgentRunner:
                             }
                         )
                 else:
-                    # Final synthesis
-                    yield ServerSentEvent(
-                        event="dag_node",
-                        data=json.dumps(
-                            {
-                                "node_id": f"{step_id}_synthesis",
-                                "node_type": "synthesis",
-                                "title": "Synthesis & Conclusion",
-                                "content": content,
-                                "status": "completed",
-                            }
-                        ),
+                    # Final synthesis reached: Emit solely via agent_completed
+                    # Final synthesis reached: Persist completed run to SQLite
+                    from app.database.models import AgentRunRecord
+
+                    task_title = (
+                        user_prompt.strip().split("\n")[0][:40] + "..."
+                        if len(user_prompt.strip().split("\n")[0]) > 40
+                        else user_prompt.strip().split("\n")[0]
                     )
+
+                    with Session(engine) as db:
+                        saved_record = AgentRunRecord(
+                            id=run_id,
+                            title=task_title or f"Task by {agent.name}",
+                            agent_id=agent.id,
+                            agent_name=agent.name,
+                            prompt=user_prompt,
+                            final_report=content,
+                        )
+                        db.add(saved_record)
+                        db.commit()
+
                     yield ServerSentEvent(
                         event="agent_completed",
-                        data=json.dumps({"final_answer": content, "run_id": run_id}),
+                        data=json.dumps(
+                            {
+                                "final_answer": content,
+                                "run_id": run_id,
+                                "title": task_title,
+                            }
+                        ),
                     )
                     return
 

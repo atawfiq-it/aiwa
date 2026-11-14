@@ -14,6 +14,17 @@
   let finalReport = '';
   let activeApproval: any = null;
 
+  function handleLoadSavedRun(run: any) {
+    promptText = run.prompt;
+    finalReport = run.final_report;
+    currentRunId = run.id;
+    selectedAgentId = run.agent_id;
+    dagNodes = [
+      { node_id: 'goal', node_type: 'goal', title: '🎯 Loaded Task Goal', content: run.prompt, status: 'completed' },
+      { node_id: 'synth', node_type: 'synthesis', title: `📋 Synthesis (${run.agent_name})`, content: 'Loaded from saved task record.', status: 'completed' }
+    ];
+  }
+
   async function loadAgents() {
     const res = await apiFetch('/agents');
     if (res.ok) {
@@ -87,6 +98,7 @@
     {isRunning}
     {currentRunId}
     onLaunch={launchAgent}
+    onLoadRun={handleLoadSavedRun}
   />
 
   <div class="flex-1 p-8 overflow-y-auto">

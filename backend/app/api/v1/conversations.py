@@ -1,7 +1,7 @@
 import re
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -197,3 +197,42 @@ def export_conversation_markdown(conversation_id: str, db: Session = Depends(get
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+class MessageUpdate(BaseModel):
+    content: str
+
+
+@router.patch("/{conversation_id}/messages/{message_id}", response_model=Message)
+def update_message(
+    conversation_id: str,
+    message_id: str,
+    req: MessageUpdate,
+    db: Session = Depends(get_db),
+):
+    """Updates the text content of a user prompt or assistant reply."""
+    msg = db.get(Message, message_id)
+    if not msg or msg.conversation_id != conversation_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    msg.content = req.content
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return msg
+
+
+@router.delete("/{conversation_id}/messages/{message_id}")
+def delete_message(
+    conversation_id: str,
+    message_id: str,
+    db: Session = Depends(get_db),
+):
+    """Permanently deletes a message from the conversation."""
+    msg = db.get(Message, message_id)
+    if not msg or msg.conversation_id != conversation_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    db.delete(msg)
+    db.commit()
+    return {"status": "success", "message": "Message deleted"}

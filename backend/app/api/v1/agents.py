@@ -1,4 +1,5 @@
 import json
+import shutil
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.core.config import settings
 from app.core.security import verify_local_token
 from app.database.engine import get_db
-from app.database.models import Agent, ToolExecution
+from app.database.models import Agent, AgentRunRecord, ToolExecution
 from app.services.agents.agent_runner import APPROVAL_DECISIONS, PENDING_APPROVALS, agent_runner
 from app.services.agents.tools import TOOL_REGISTRY
 
@@ -186,3 +187,60 @@ async def run_autonomous_agent(agent_id: str, req: AgentRunRequest):
             max_iterations=req.max_iterations,
         )
     )
+
+
+class RunRenameRequest(BaseModel):
+    title: str = Field(min_length=1)
+
+
+@router.get("/runs/history", response_model=list[AgentRunRecord])
+def list_agent_runs(db: Session = Depends(get_db)):
+    """Lists saved agent task runs chronologically."""
+    return db.exec(
+        select(AgentRunRecord).order_by(AgentRunRecord.created_at.desc())  # type: ignore
+    ).all()
+
+
+@router.get("/runs/{run_id}", response_model=AgentRunRecord)
+def get_agent_run(run_id: str, db: Session = Depends(get_db)):
+    """Retrieves a specific agent run."""
+    record = db.get(AgentRunRecord, run_id)
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
+    return record
+
+
+@router.patch("/runs/{run_id}", response_model=AgentRunRecord)
+def rename_agent_run(
+    run_id: str,
+    req: RunRenameRequest,
+    db: Session = Depends(get_db),
+):
+    """Renames an agent run title."""
+    record = db.get(AgentRunRecord, run_id)
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
+
+    record.title = req.title.strip()
+    record.updated_at = datetime.now(UTC)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.delete("/runs/{run_id}")
+def delete_agent_run(run_id: str, db: Session = Depends(get_db)):
+    """Deletes an agent run and cleans up its workspace directory from disk."""
+    record = db.get(AgentRunRecord, run_id)
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
+
+    # Clean workspace directory from disk
+    workspace_dir = settings.DATA_DIR / "workspaces" / run_id
+    if workspace_dir.exists():
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+
+    db.delete(record)
+    db.commit()
+    return {"status": "success", "message": f"Run '{record.title}' deleted"}

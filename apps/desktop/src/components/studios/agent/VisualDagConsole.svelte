@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { apiFetch } from '../../../lib/api';
   import { marked } from 'marked';
+  import { apiFetch } from '../../../lib/api';
 
   export let dagNodes: {
     node_id: string;
-    node_type: 'tool_call' | 'observation' | 'synthesis';
+    node_type: 'goal' | 'planning' | 'tool_call' | 'observation' | 'synthesis';
     title: string;
     content?: string;
     output?: any;
@@ -39,7 +39,7 @@
   }
 </script>
 
-<div class="space-y-4">
+<div class="space-y-6">
   <!-- Human-in-the-Loop Breakpoint Modal -->
   {#if activeApproval}
     <div class="bg-amber-500/10 border-2 border-amber-500 rounded-2xl p-6 shadow-xl space-y-4 select-none">
@@ -48,7 +48,7 @@
         <span>Human Breakpoint: Inspection Required before Execution</span>
       </div>
       <p class="text-xs text-[var(--text-muted)]">
-        The agent requested to run tool <strong class="text-[var(--text-main)] font-mono">{activeApproval.tool_name}</strong>. Inspect or modify the code below before proceeding:
+        The agent requested to execute <strong class="text-[var(--text-main)] font-mono">{activeApproval.tool_name}</strong>. Inspect or modify the code below before proceeding:
       </p>
 
       <textarea
@@ -83,26 +83,32 @@
     </div>
   {/if}
 
-  <!-- Visual DAG Node List -->
+  <!-- Visual DAG Node Timeline -->
   {#if dagNodes.length === 0}
     <div class="border-2 border-dashed border-[var(--border-color)] rounded-2xl p-12 text-center text-[var(--text-muted)] space-y-2 select-none">
       <span class="text-3xl">⚙️</span>
-      <p class="text-sm font-medium text-[var(--text-main)]">Visual DAG Idle</p>
-      <p class="text-xs">Launch an agent task to view real-time cognitive reasoning nodes.</p>
+      <p class="text-sm font-medium text-[var(--text-main)]">Cognitive Reasoning Console Idle</p>
+      <p class="text-xs">Select an agent scenario, assign a task, and click Launch to view step nodes.</p>
     </div>
   {:else}
     <div class="space-y-3 font-mono text-xs">
-      {#each dagNodes as node}
+      <div class="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">
+        Cognitive Flow & Tool Executions ({dagNodes.length} steps)
+      </div>
+
+      <!-- Filter out any legacy synthesis nodes so final answer is never duplicated -->
+      {#each dagNodes.filter((n) => n.node_type !== 'synthesis') as node}
         <div class={`p-4 rounded-2xl border transition shadow-sm ${
-          node.node_type === 'tool_call'
-            ? 'bg-indigo-950/20 border-indigo-500/40'
-            : node.node_type === 'observation'
-            ? 'bg-emerald-950/20 border-emerald-500/40'
-            : 'bg-[var(--bg-card)] border-[var(--border-color)]'
+          node.node_type === 'goal'
+            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+            : node.node_type === 'planning'
+            ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
+            : node.node_type === 'tool_call'
+            ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+            : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
         }`}>
-          <div class="flex items-center justify-between pb-2 border-b border-[var(--border-color)]/60">
+          <div class="flex items-center justify-between pb-1.5 border-b border-[var(--border-color)]/60">
             <div class="flex items-center gap-2">
-              <span>{node.node_type === 'tool_call' ? '⚡' : node.node_type === 'observation' ? '📦' : '📋'}</span>
               <span class="font-bold text-[var(--text-main)]">{node.title}</span>
             </div>
             {#if node.duration_ms}
@@ -112,11 +118,11 @@
 
           <div class="mt-2 text-[11px] overflow-x-auto text-[var(--text-main)] whitespace-pre-wrap">
             {#if node.arguments}
-              <pre class="p-2 bg-[var(--bg-base)] rounded-lg text-indigo-300">{JSON.stringify(node.arguments, null, 2)}</pre>
+              <pre class="p-2.5 bg-[var(--bg-base)] rounded-xl text-amber-300 font-mono">{JSON.stringify(node.arguments, null, 2)}</pre>
             {:else if node.output}
-              <pre class="p-2 bg-[var(--bg-base)] rounded-lg text-emerald-400">{typeof node.output === 'string' ? node.output : JSON.stringify(node.output, null, 2)}</pre>
+              <pre class="p-2.5 bg-[var(--bg-base)] rounded-xl text-emerald-400 font-mono">{typeof node.output === 'string' ? node.output : JSON.stringify(node.output, null, 2)}</pre>
             {:else}
-              <div class="p-2 bg-[var(--bg-base)] rounded-lg">{node.content}</div>
+              <div class="p-2 bg-[var(--bg-base)] rounded-xl text-[var(--text-main)]">{node.content}</div>
             {/if}
           </div>
         </div>
@@ -124,9 +130,9 @@
     </div>
   {/if}
 
-
+  <!-- Single Rendered Markdown Final Report -->
   {#if finalReport}
-    <div class="mt-8 bg-[var(--bg-card)] border-2 border-indigo-500/40 rounded-2xl p-6 shadow-xl space-y-4">
+    <div class="bg-[var(--bg-card)] border-2 border-indigo-500/40 rounded-2xl p-6 shadow-xl space-y-4">
       <div class="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-wider">
         <span>📋</span> Agent Final Synthesis & Audit Report
       </div>

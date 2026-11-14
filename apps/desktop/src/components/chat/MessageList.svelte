@@ -3,9 +3,15 @@
   import 'highlight.js/styles/github-dark.css';
   import { marked, type Tokens } from 'marked';
   import { apiFetch } from '../../lib/api';
-  import { activeCharacterId, characters } from '../../lib/stores';
+  import {
+    activeCharacterId,
+    activeConversationId,
+    characters,
+    sessionToken,
+  } from '../../lib/stores';
 
   export let messages: {
+    id?: string;
     role: string;
     content: string;
     image_paths?: string[];
@@ -13,16 +19,7 @@
   }[] = [];
   export let onSelectQuickPrompt: (text: string) => void;
   export let onContinueMessage: () => void = () => {};
-
-  // WhatsApp-style circular portrait avatars (no emojis)
-  const personaAvatars: Record<string, string> = {
-    'General Assistant': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    'Software Architect': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    'Creative Storyteller': 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
-    'Research Analyst': 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
-    'Executive Brief Writer': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-    'Code Reviewer': 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150&auto=format&fit=crop&q=80',
-  };
+  export let onReloadMessages: () => void = () => {};
 
   $: activePersona = $characters.find((c) => c.id === $activeCharacterId) || $characters[0];
 
@@ -32,7 +29,10 @@
   let isAudioLoading: boolean = false;
   let perMessageVoice: Record<number, string> = {};
 
-  // Modern Typed Marked.js Code Syntax Highlighting
+  // Inline Message Editing State
+  let editingMessageId: string | null = null;
+  let editingContent = '';
+
   marked.use({
     renderer: {
       code(token: Tokens.Code): string {
@@ -45,13 +45,13 @@
 
   function cleanTextForSpeech(raw: string): string {
     return raw
-      .replace(/!\[.*?\]\(.*?\)/g, '')               // Strip image tags
-      .replace(/\[.*?\]\(.*?\)/g, '')               // Strip links
-      .replace(/```[\s\S]*?```/g, '')               // Strip code blocks
-      .replace(/`.*?`/g, '')                         // Strip inline code
-      .replace(/#+\s+/g, '')                         // Strip markdown headings
-      .replace(/[*_~>]/g, '')                        // Strip bold/italics/quotes
-      .replace(/^(Prompt|You asked|User):.*$/gim, '') // Strip echoed user headers
+      .replace(/!\[.*?\]\(.*?\)/g, '')
+      .replace(/\[.*?\]\(.*?\)/g, '')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`.*?`/g, '')
+      .replace(/#+\s+/g, '')
+      .replace(/[*_~>]/g, '')
+      .replace(/^(Prompt|You asked|User):.*$/gim, '')
       .trim();
   }
 
@@ -110,37 +110,47 @@
     playingMessageIndex = null;
   }
 
+  function startEdit(msg: any) {
+    editingMessageId = msg.id;
+    editingContent = msg.content;
+  }
+
+  async function saveEdit(msgId: string) {
+    if (!$activeConversationId || !editingContent.trim()) return;
+    const res = await apiFetch(`/conversations/${$activeConversationId}/messages/${msgId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: editingContent }),
+    });
+    if (res.ok) {
+      editingMessageId = null;
+      onReloadMessages();
+    }
+  }
+
+  async function deleteMessage(msgId: string) {
+    if (!$activeConversationId || !confirm('Permanently delete this message?')) return;
+    const res = await apiFetch(`/conversations/${$activeConversationId}/messages/${msgId}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      onReloadMessages();
+    }
+  }
+
   const starterCards = [
-    {
-      title: 'Vision Analysis',
-      desc: 'Attach an image and ask questions about its contents',
-      prompt: 'Please describe the key details of this image:',
-    },
-    {
-      title: 'Code Architect',
-      desc: 'Inspect algorithms, security, and refactoring patterns',
-      prompt: 'Review this code for performance bottlenecks:',
-    },
-    {
-      title: 'Executive Brief',
-      desc: 'Summarize documents into concise spoken bullet points',
-      prompt: 'Create an executive summary of the following points:',
-    },
-    {
-      title: 'Creative Story',
-      desc: 'Atmospheric storytelling with sensory depth and pacing',
-      prompt: 'Write an engaging narrative about an observatory in a nebula:',
-    },
+    { title: 'Vision Analysis', desc: 'Attach an image and ask questions about it', prompt: 'Please describe the key details of this image.' },
+    { title: 'Code Architect', desc: 'Inspect algorithms, security, and refactoring', prompt: 'Review this code for performance bottlenecks:' },
+    { title: 'Executive Brief', desc: 'Summarize documents into concise bullet points', prompt: 'Create an executive summary of the following points:' },
+    { title: 'Creative Story', desc: 'Atmospheric storytelling with sensory depth', prompt: 'Write an engaging story about an observatory in a nebula.' },
   ];
 </script>
 
 <div class="flex-1 overflow-y-auto p-6 space-y-6">
   {#if messages.length === 0}
-    <!-- Empty Canvas: Starter Cards -->
+    <!-- Starter Cards -->
     <div class="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-6 select-none">
-      <div
-        class="h-14 w-14 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-2xl flex items-center justify-center text-2xl shadow-sm text-[var(--accent)] font-bold"
-      >
+      <div class="h-14 w-14 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-2xl flex items-center justify-center text-2xl shadow-sm text-[var(--accent)] font-bold">
         A
       </div>
       <div>
@@ -165,8 +175,28 @@
     <!-- Chat Bubbles -->
     {#each messages as msg, i}
       {#if msg.role === 'user'}
-        <!-- User Prompt Bubble (Color 1: Vibrant Blue / Indigo) -->
-        <div class="flex justify-end">
+        <!-- User Prompt Bubble -->
+        <div class="flex justify-end group items-start gap-2">
+          <!-- Edit & Delete Hover Actions -->
+          <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition select-none mt-2">
+            <button
+              type="button"
+              on:click={() => startEdit(msg)}
+              class="text-slate-400 hover:text-indigo-400 p-1 text-xs"
+              title="Edit Prompt"
+            >
+              ✏️
+            </button>
+            <button
+              type="button"
+              on:click={() => msg.id && deleteMessage(msg.id)}
+              class="text-slate-400 hover:text-rose-400 p-1 text-xs"
+              title="Delete Prompt"
+            >
+              ✕
+            </button>
+          </div>
+
           <div
             style="background-color: var(--bubble-user); color: var(--bubble-user-text);"
             class="max-w-2xl rounded-2xl rounded-tr-sm px-5 py-3.5 text-sm shadow-sm"
@@ -176,33 +206,98 @@
                 🖼️ Attached {msg.image_paths.length} image(s)
               </div>
             {/if}
-            <p class="whitespace-pre-wrap">{msg.content}</p>
+
+            {#if editingMessageId === msg.id}
+              <textarea
+                rows="3"
+                bind:value={editingContent}
+                class="w-full bg-black/20 text-white rounded-lg p-2 text-xs focus:outline-none font-sans"
+              ></textarea>
+              <div class="flex justify-end gap-2 mt-2">
+                <button
+                  type="button"
+                  on:click={() => (editingMessageId = null)}
+                  class="px-2 py-0.5 text-xs text-white/70 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  on:click={() => msg.id && saveEdit(msg.id)}
+                  class="px-3 py-0.5 bg-white text-indigo-700 font-bold rounded-md text-xs"
+                >
+                  Save
+                </button>
+              </div>
+            {:else}
+              <p class="whitespace-pre-wrap">{msg.content}</p>
+            {/if}
           </div>
         </div>
       {:else}
-        <!-- Assistant Answer Bubble (Color 2: Slate Card / White Card) with WhatsApp-Style Avatar -->
-        <div class="flex items-start gap-3 justify-start max-w-3xl">
-          <!-- WhatsApp-Style Circular Avatar (No Emoji) -->
+        <!-- Assistant Answer Bubble with Local Disk Avatar -->
+        <div class="flex items-start gap-3 justify-start max-w-3xl group">
           <img
-            src={personaAvatars[activePersona?.name] || personaAvatars['General Assistant']}
-            alt={activePersona?.name || 'Persona'}
-            class="w-9 h-9 rounded-full object-cover border border-[var(--border-color)] shadow-sm shrink-0 mt-1"
+            src={`http://127.0.0.1:8000/api/v1/characters/avatars/${activePersona?.name || 'default'}?token=${$sessionToken}`}
+            alt={activePersona?.name}
+            class="w-9 h-9 rounded-full object-cover border border-[var(--border-color)] shadow-sm shrink-0 mt-1 bg-[var(--bg-card)]"
           />
 
-          <!-- Answer Card -->
           <div
             style="background-color: var(--bubble-assistant); color: var(--bubble-assistant-text);"
-            class="flex-1 rounded-2xl rounded-tl-sm px-5 py-4 text-sm border border-[var(--border-color)] shadow-sm space-y-3"
+            class="flex-1 rounded-2xl rounded-tl-sm px-5 py-4 text-sm border border-[var(--border-color)] shadow-sm space-y-3 relative"
           >
-            <!-- Rendered Markdown Text -->
-            <div class="prose prose-sm max-w-none text-[var(--bubble-assistant-text)]">
-              {@html marked.parse(msg.content)}
+            <!-- Edit & Delete Hover Actions -->
+            <div class="absolute top-2 right-3 opacity-0 group-hover:opacity-100 flex items-center gap-1 transition select-none">
+              <button
+                type="button"
+                on:click={() => startEdit(msg)}
+                class="text-[var(--text-muted)] hover:text-indigo-400 p-1 text-xs"
+                title="Edit Response"
+              >
+                ✏️
+              </button>
+              <button
+                type="button"
+                on:click={() => msg.id && deleteMessage(msg.id)}
+                class="text-[var(--text-muted)] hover:text-rose-400 p-1 text-xs"
+                title="Delete Response"
+              >
+                ✕
+              </button>
             </div>
 
-            <!-- In-Bubble Voice Controls for This Specific Answer -->
+            {#if editingMessageId === msg.id}
+              <textarea
+                rows="5"
+                bind:value={editingContent}
+                class="w-full bg-[var(--bg-base)] text-[var(--text-main)] rounded-lg p-2.5 text-xs border border-[var(--border-color)] focus:outline-none"
+              ></textarea>
+              <div class="flex justify-end gap-2">
+                <button
+                  type="button"
+                  on:click={() => (editingMessageId = null)}
+                  class="px-2.5 py-1 text-xs text-[var(--text-muted)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  on:click={() => msg.id && saveEdit(msg.id)}
+                  class="px-3 py-1 bg-indigo-600 text-white font-bold rounded-lg text-xs"
+                >
+                  Save
+                </button>
+              </div>
+            {:else}
+              <div class="prose prose-sm max-w-none text-[var(--bubble-assistant-text)]">
+                {@html marked.parse(msg.content)}
+              </div>
+            {/if}
+
+            <!-- In-Bubble Speech & Action Controls -->
             <div class="pt-3 border-t border-[var(--border-color)] flex items-center justify-between text-xs">
               <div class="flex items-center gap-2">
-                <!-- Voice Selector Dropdown -->
                 <select
                   bind:value={perMessageVoice[i]}
                   class="bg-[var(--bg-base)] text-[var(--text-main)] text-[11px] rounded-lg px-2 py-1 border border-[var(--border-color)] focus:outline-none cursor-pointer"
@@ -212,7 +307,6 @@
                   <option value="bf_emma">Voice: Emma (UK Female)</option>
                 </select>
 
-                <!-- Play / Pause Button -->
                 <button
                   type="button"
                   on:click={() => togglePlaySpeech(msg.content, i)}
@@ -227,7 +321,6 @@
                   {/if}
                 </button>
 
-                <!-- Stop Button -->
                 {#if playingMessageIndex === i}
                   <button
                     type="button"
@@ -239,7 +332,6 @@
                 {/if}
               </div>
 
-              <!-- Continue Button (if cut off by token limit) -->
               {#if msg.is_truncated}
                 <button
                   type="button"

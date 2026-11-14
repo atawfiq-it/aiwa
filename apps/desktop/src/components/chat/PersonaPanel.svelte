@@ -1,20 +1,10 @@
 <script lang="ts">
-  import { activeCharacterId, characters } from '../../lib/stores';
+  import { activeCharacterId, characters, sessionToken } from '../../lib/stores';
 
   export let isStreaming: boolean = false;
   export let isOpen: boolean = true;
 
   $: activePersona = $characters.find((c) => c.id === $activeCharacterId) || $characters[0];
-
-  // Visual portrait avatars mapped to starter personas
-  const avatarPortraits: Record<string, string> = {
-    'General Assistant': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80',
-    'Software Architect': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80',
-    'Creative Storyteller': 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500&auto=format&fit=crop&q=80',
-    'Research Analyst': 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=500&auto=format&fit=crop&q=80',
-    'Executive Brief Writer': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=500&auto=format&fit=crop&q=80',
-    'Code Reviewer': 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=500&auto=format&fit=crop&q=80',
-  };
 </script>
 
 {#if isOpen}
@@ -29,7 +19,7 @@
       <!-- Persona Portrait Card -->
       <div class="relative mx-auto w-44 h-56 rounded-2xl overflow-hidden border-2 border-[var(--border-color)] shadow-2xl group">
         <img
-          src={avatarPortraits[activePersona?.name] || avatarPortraits['General Assistant']}
+          src={`http://127.0.0.1:8000/api/v1/characters/avatars/${activePersona?.name || 'default'}?token=${$sessionToken}`}
           alt={activePersona?.name}
           class="w-full h-full object-cover group-hover:scale-105 transition duration-500"
         />
