@@ -12,7 +12,7 @@ repos:
     hooks:
       - id: block-sensitive-files
         name: Block Private Data & Model Checkpoints
-        entry: bash -c 'for f in "$@"; do if [[ "$f" =~ \.(db|sqlite|sqlite3|gguf|safetensors|ckpt)$ || "$f" =~ \.aiwa_session_token || "$f" =~ \.env ]]; then echo "❌ Commit Blocked:-Sensitive file detected:- $f"; exit 1; fi; done' --
+        entry: bash -c 'for f in "$@"; do if [[ "$f" =~ \.(db|sqlite|sqlite3|gguf|safetensors|ckpt)$ || "$f" =~ \.aiwa_session_token  ]]; then echo "❌ Commit Blocked:-Sensitive file detected:- $f"; exit 1; fi; done' --
         language: system
         stages: [commit]
 

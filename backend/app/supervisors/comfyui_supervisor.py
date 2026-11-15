@@ -33,9 +33,9 @@ class ComfyUISupervisor:
             str(self.python_bin),
             "main.py",
             "--port",
-            "8188",
+            str(settings.COMFYUI_PORT),
             "--listen",
-            "127.0.0.1",
+            settings.API_HOST,
             "--preview-method",
             "none",
         ]

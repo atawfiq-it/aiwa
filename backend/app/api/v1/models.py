@@ -207,11 +207,21 @@ async def load_model(model_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Model configuration not found",
         )
+
+    # Persist as new default in SQLite
+    all_models = db.exec(select(ModelConfig)).all()
+    for m in all_models:
+        m.is_default = m.id == model_id
+        db.add(m)
+    db.commit()
+
     try:
         await model_supervisor.load_model(model)
-        return {"status": "success", "message": f"Model {model.display_name} loaded"}
+        return {
+            "status": "success",
+            "message": f"Model {model.display_name} loaded and set as default",
+        }
     except Exception as e:
-        logger.error(f"Error loading model {model_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),

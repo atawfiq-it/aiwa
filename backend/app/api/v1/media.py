@@ -3,6 +3,7 @@ import io
 import logging
 import shutil
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
@@ -13,7 +14,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.security import verify_local_token
 from app.database.engine import get_db
-from app.database.models import Attachment, GeneratedFile, Task
+from app.database.models import AppSetting, Attachment, GeneratedFile, Task
 from app.services.media.comfyui import comfyui_adapter
 from app.services.media.diffusers_service import direct_diffusion
 from app.services.tasks.queue import task_queue
@@ -67,6 +68,10 @@ class DirectImageRequest(BaseModel):
     seed: int = -1
     batch_size: int = 1
     style_preset: str = "none"
+
+
+class DefaultDiffusionRequest(BaseModel):
+    checkpoint_path: str
 
 
 @router.post("/audio/podcast-csv")
@@ -306,3 +311,24 @@ def delete_generated_media_file(file_id: str, db: Session = Depends(get_db)):
     db.delete(record)
     db.commit()
     return {"status": "success", "message": f"Deleted {record.file_name}"}
+
+
+@router.get("/diffusion/default-checkpoint")
+def get_default_diffusion_checkpoint(db: Session = Depends(get_db)):
+    record = db.get(AppSetting, "default_diffusion_checkpoint")
+    if record and record.value:
+        return {"checkpoint_path": record.value}
+    return {"checkpoint_path": settings.DEFAULT_DIFFUSION_MODEL}
+
+
+@router.post("/diffusion/default-checkpoint")
+def set_default_diffusion_checkpoint(req: DefaultDiffusionRequest, db: Session = Depends(get_db)):
+    record = db.get(AppSetting, "default_diffusion_checkpoint")
+    if not record:
+        record = AppSetting(key="default_diffusion_checkpoint", value=req.checkpoint_path)
+    else:
+        record.value = req.checkpoint_path
+        record.updated_at = datetime.now(UTC)
+    db.add(record)
+    db.commit()
+    return {"status": "success", "checkpoint_path": req.checkpoint_path}

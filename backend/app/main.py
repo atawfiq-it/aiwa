@@ -19,6 +19,7 @@ from app.api.v1.huggingface import router as hf_router
 from app.api.v1.knowledge_bases import router as kb_router
 from app.api.v1.media import router as media_router
 from app.api.v1.models import router as models_router
+from app.api.v1.openai_compat.router import router as openai_compat_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.workflows import router as workflows_router
 from app.core.config import settings
@@ -39,9 +40,8 @@ from app.supervisors.model_supervisor import ModelState, model_supervisor
 
 
 async def auto_discover_and_register_models():
-    """Scans all configured directories and subdirectories on boot and registers any new GGUF models."""
     logger.info("Scanning configured paths and subdirectories for GGUF models...")
-    search_paths = [str(settings.MODELS_DIR.resolve())]
+    search_paths = [str(p) for p in settings.get_llm_search_paths()]
 
     with Session(engine) as db:
         record = db.get(AppSetting, "model_search_directories")
@@ -54,7 +54,6 @@ async def auto_discover_and_register_models():
             except Exception:
                 pass
 
-        # Run recursive scan
         scanned = model_scanner.scan_directories(search_paths)
         newly_registered = 0
 
@@ -95,17 +94,41 @@ async def auto_discover_and_register_models():
 
 
 async def auto_load_default_model():
-    """Automatically loads default registered model on startup in background if present."""
+    """Automatically selects and loads the default model specified in .env or database on startup."""
     await asyncio.sleep(0.5)
     with Session(engine) as db:
-        default_model = db.exec(
-            select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
-        ).first()
-        if default_model and model_supervisor.state == ModelState.UNLOADED:
-            print(f"[AIWA] Auto-loading default model '{default_model.display_name}'...")
+        target_model = None
+
+        # 1. Try matching DEFAULT_LLM_MODEL from .env
+        if settings.DEFAULT_LLM_MODEL:
+            stmt = select(ModelConfig).where(
+                ModelConfig.display_name.ilike(f"%{settings.DEFAULT_LLM_MODEL}%")
+                | ModelConfig.file_path.ilike(f"%{settings.DEFAULT_LLM_MODEL}%")
+            )
+            target_model = db.exec(stmt).first()
+
+        # 2. Fallback to existing is_default flag
+        if not target_model:
+            target_model = db.exec(
+                select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
+            ).first()
+
+        # 3. Fallback to first registered model
+        if not target_model:
+            target_model = db.exec(select(ModelConfig)).first()
+
+        if target_model and model_supervisor.state == ModelState.UNLOADED:
+            # Mark as default in DB
+            all_models = db.exec(select(ModelConfig)).all()
+            for m in all_models:
+                m.is_default = m.id == target_model.id
+                db.add(m)
+            db.commit()
+
+            print(f"[AIWA] Auto-loading default LLM '{target_model.display_name}'...")
             try:
-                await model_supervisor.load_model(default_model)
-                print(f"[AIWA] ✅ Default model '{default_model.display_name}' is Ready.")
+                await model_supervisor.load_model(target_model)
+                print(f"[AIWA] ✅ Default model '{target_model.display_name}' is Ready.")
             except Exception as e:
                 print(f"[AIWA] ⚠️ Failed auto-loading default model: {e}")
 
@@ -203,6 +226,7 @@ app.include_router(agents_router, prefix=settings.API_V1_PREFIX)
 app.include_router(workflows_router, prefix=settings.API_V1_PREFIX)
 app.include_router(characters_router, prefix=settings.API_V1_PREFIX)
 app.include_router(hf_router, prefix=settings.API_V1_PREFIX)
+app.include_router(openai_compat_router)
 
 
 @app.get("/api/v1/health")
@@ -226,3 +250,14 @@ async def get_development_token():
 async def verify_auth():
     """Verifies that the provided session token header is valid."""
     return {"status": "authenticated"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=not settings.is_production,
+    )
