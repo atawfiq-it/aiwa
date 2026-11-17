@@ -9,13 +9,53 @@
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Tauri v2](https://img.shields.io/badge/Desktop-Tauri_v2-24C8DB?style=flat&logo=tauri&logoColor=white)](https://tauri.app/)
 [![Svelte](https://img.shields.io/badge/Frontend-Svelte-FF3E00?style=flat&logo=svelte&logoColor=white)](https://svelte.dev/)
-[![LLM Runtime](https://img.shields.io/badge/LLM-llama.cpp-yellow?style=flat)](https://github.com/ggerganov/llama.cpp)
+[![LLM Runtimes](https://img.shields.io/badge/LLM-llama.cpp_%7C_Apple_MLX-yellow?style=flat)](https://github.com/ggml-org/llama.cpp)
+[![Hardware](https://img.shields.io/badge/Accelerators-CUDA_%7C_Metal_%7C_ROCm_%7C_CPU-success?style=flat)](#-universal-hardware--openai-compatibility)
 [![Package Manager](https://img.shields.io/badge/Packaging-uv-blueviolet?style=flat)](https://github.com/astral-sh/uv)
-[![Linux Packaging](https://img.shields.io/badge/Bundle-AppImage_%7C_Debian-blue?style=flat&logo=linux)](https://github.com/)
+[![Linux Packaging](https://img.shields.io/badge/Bundle-AppImage_%7C_Debian-blue?style=flat&logo=linux)](#-building-native-desktop-installers-appimage--deb)
 
-[Features](#-key-features) • [The Story of "Aiwa"](#-what-does-aiwa-mean) • [Recommended Models](#-recommended-models) • [Quick Start](#-quick-start-installation) • [Workstation Architecture](#-architecture) • [Contributing & Connect](#-connect--contribute)
+[Screenshots](#-application-screenshots) • [Features](#-key-features) • [The Story of "Aiwa"](#-what-does-aiwa-mean) • [Recommended Models](#-recommended-models) • [Quick Start & Install](#-quick-start--installation) • [macOS Guide](#-macos-installation-guide-apple-silicon--intel) • [Architecture](#-architecture) • [Connect & Contribute](#-connect--contribute)
 
 </div>
+
+---
+
+## 📸 Application Screenshots
+
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="sample/01_text.png" alt="Text and Vision Studio" width="100%" />
+      <br />
+      <strong>1. Text & Vision Studio</strong>
+      <br />
+      <sub>Multimodal chat, WhatsApp-style persona avatars, in-bubble Kokoro voice controls, and Light/Dark themes.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="sample/02_image.png" alt="Image Studio" width="100%" />
+      <br />
+      <strong>2. Pro Image Studio</strong>
+      <br />
+      <sub>Direct PyTorch FP16 & C++ <code>stable-diffusion.cpp</code> rendering with samplers, seeds, style presets, and gallery.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="sample/03_voice.png" alt="Voice Studio Pro" width="100%" />
+      <br />
+      <strong>3. Voice Studio Pro</strong>
+      <br />
+      <sub>Kokoro TTS, CSV multi-speaker podcast generator, Faster-Whisper STT with .SRT export, and live waveform monitor.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="sample/04_agent.png" alt="Agent Studio Pro" width="100%" />
+      <br />
+      <strong>4. Autonomous Agent Studio</strong>
+      <br />
+      <sub>Visual reasoning DAG, Human-in-the-Loop breakpoints, Python sandbox, GBNF JSON constraints, and saved task records.</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -25,7 +65,7 @@
 
 When asked:
 * *Can you run 7B vision-language models, fast image diffusion, and neural voice synthesis entirely on local hardware?*
-* *Can an 8GB to 12GB consumer GPU handle visual reasoning, text generation, and media without cloud subscriptions or telemetry?*
+* *Can an 8GB to 12GB consumer GPU (or Apple Silicon Mac) handle visual reasoning, text generation, and media without cloud subscriptions or telemetry?*
 * *Can developer workflows, document intelligence, and autonomous code execution remain 100% private and offline?*
 
 The answer is **AIWA! (أيوه)**.
@@ -39,11 +79,12 @@ Hello! I built **AIWA** out of a passion for local-first computing, private AI i
 While cloud AI services offer convenient APIs, they lock users into recurring costs, unpredictable latency, privacy compromises, and walled gardens. Most existing local AI interfaces either act as simple text wrappers around Ollama or require managing a disjointed collection of separate applications (one for LLM chat, one for ComfyUI, another for Whisper, and terminal scripts for RAG).
 
 **AIWA** unifies these capabilities into an integrated, decoupled workstation:
-* A high-performance **FastAPI daemon** orchestrated by a central **VRAM Arbiter**.
-* A sleek, lightweight **Tauri desktop shell** built with Svelte and Tailwind CSS.
-* **Three focused, conflict-free studios** (Text & Vision, Image Diffusion, and Voice) that maximize GPU efficiency without process clashes.
+* A high-performance **FastAPI daemon** orchestrated by a central **VRAM & Unified Memory Arbiter**.
+* A sleek, lightweight **Tauri v2 desktop shell** built with Svelte, TypeScript, and Tailwind CSS featuring clean **Light & Dark** themes.
+* **Four dedicated, conflict-free studios** (Text & Vision, Image Diffusion, Voice, and Autonomous Agents) that maximize hardware efficiency without process clashes.
 
 ---
+
 ## ⚖️ Responsible Use & Ethical Disclaimer
 
 **AIWA** is created to foster local AI sovereignty, privacy-conscious research, and productive developer automation. Because all model inference, diffusion, and code execution run 100% locally on your personal hardware without centralized telemetry or cloud filters, **users bear sole responsibility for the prompts, media, code, and content generated using this platform.**
@@ -59,39 +100,40 @@ By using this software, you agree to use AIWA exclusively for lawful, ethical, a
 The creator and contributors of AIWA provide this software on an *"as is"* basis without warranties of any kind. Under no circumstances shall the author be held liable for any damages, legal claims, or misuse arising from local model outputs or user-initiated actions.
 
 ---
+
 ## 🚀 Key Features
 
 ### 1. 💬 Dedicated Text & Vision Studio
-* **Powered by `llama.cpp`**: Single, standardized C++ inference runtime.
-* **Multimodal Visual Analysis**: Attach `.png`, `.jpg`, or `.pdf` files directly for document reading, UI inspection, and visual reasoning.
-* **4,096+ Token Context Window**: Ample breathing room for high-resolution visual patch tokens and multi-turn conversations without premature truncation.
-* **WhatsApp-Style Character Personas**: Switch between specialized personas (*Software Architect*, *Creative Storyteller*, *Code Reviewer*, *Research Analyst*, *Executive Brief Writer*) with local disk avatars and distinct cognitive perspectives.
-* **In-Chat Message Management**: Edit (✏️) or delete (✕) any prompt or reply directly inside the thread, with one-click Rich Markdown (`.md`) export.
-* **Instant Cancellation**: One-click `⏹ Stop` button powered by `AbortController` to halt generation mid-sentence.
+* **Dual-Runtime Engine (`llama.cpp` + Native Apple MLX)**: Standardized C++ inference for `.gguf` models across Linux/Windows/macOS (`4,096+` tokens per slot via `--parallel 1`), plus a dedicated **Apple MLX worker (`mlx-lm` / `mlx-vlm`)** for native `.safetensors` acceleration on Apple Silicon Macs.
+* **Smart `.safetensors` Header Inspection**: Reads binary tensor headers in under 1ms to accurately distinguish MLX LLMs from Stable Diffusion checkpoints—even when co-located in the same folder—alongside boot-time recursive discovery across `.env`-configured paths.
+* **Multimodal Visual Analysis**: Attach `.png`, `.jpg`, or `.pdf` files directly for document extraction (`PyMuPDF4LLM`), UI inspection, and visual reasoning.
+* **In-Bubble Voice Controls**: Every individual assistant answer includes an embedded voice selector, **Play/Pause**, and **Stop** button powered by Kokoro TTS.
+* **WhatsApp-Style Character Personas**: Switch between specialized personas (*Software Architect*, *Creative Storyteller*, *Code Reviewer*, *Research Analyst*, *Executive Brief Writer*) backed by local disk avatars (`data/avatars/` with automatic `default.png` fallback) and a collapsible right-side presence drawer.
+* **In-Chat Editing, Continuation & Export**: Edit (✏️) or delete (✕) any prompt or answer directly, resume long outputs seamlessly with **▶️ Continue**, cancel mid-stream (`⏹ Stop` via `AbortController`), and export any thread to Rich Markdown (`.md`).
 
-### 2. 🎨 Pro Direct-Diffusion Studio
-* **Serverless PyTorch FP16 Diffusion**: Direct checkpoint execution via Hugging Face `diffusers` — zero external server daemons or complex node-graph configurations required.
-* **Multi-Directory `.safetensors` Discovery**: Automatically scans directories configured in `.env` across all your drives.
-* **Gold-Standard Samplers**: Choose between `DPM++ 2M Karras`, `Euler a`, `Euler`, and `DDIM`.
-* **Pro Artistic Controls**: Fine-tune sampling steps (up to 50), CFG guidance scales (1.0 to 15.0), aspect ratios, style presets (*Cinematic*, *Photorealistic*, *Anime*, *Digital Art*), deterministic seeds, and batch sizes (1, 2, or 4 images).
-* **Safe Local Media Storage**: Full-resolution image canvas with instant download and disk deletion.
+### 2. 🎨 Dual-Engine Image Studio
+* **Python `diffusers` Engine (Default)**: Serverless PyTorch FP16 pipeline supporting custom schedulers (`DPM++ 2M Karras`, `Euler a`, `Euler`, `DDIM`), CFG scale sliders, up to 50 sampling steps, style presets (*Cinematic*, *Photorealistic*, *Anime*, *Digital Art*), deterministic seeds, and batch sizes (1–4).
+* **Pure C++ `stable-diffusion.cpp` Adapter**: Ultra-low VRAM (~1.8–2.5 GB) GGML diffusion binary in `services/diffusion-cpp/` for constrained hardware.
+* **Strict Diffusion Path Scoping**: Scans only `DIFFUSION_MODEL_DIRECTORIES` from `.env` across all subdirectories (filtering out MLX LLM `.safetensors`), with instant gallery preview, download, and permanent disk deletion.
 
 ### 3. 🎙️ Voice Studio Pro (100% CPU-Bound)
-* **Neural Speech Synthesis (Kokoro-82M)**: Natural, human-like voice synthesis with selectable voice profiles (*Heart*, *Adam*, *Emma*) and native speed multipliers (`0.75x` to `1.5x`).
-* **Multi-Speaker Podcast Generator**: Import multi-line dialogue CSV files (`speaker,voice,text`) to generate full conversational podcasts with programmatic silence pauses and master `.wav` export.
-* **Speech-to-Text (Faster-Whisper)**: Accurate microphone transcription and audio file speech-to-text with one-click synchronized `.SRT` and `.VTT` subtitle generation.
-* **Zero VRAM Contention**: Runs exclusively on the CPU using INT8/Float32 compute, leaving 100% of GPU memory for graphics and language models.
+* **Neural Speech Synthesis (Kokoro-82M)**: Full multi-paragraph speech generation with selectable voice profiles (*Heart*, *Adam*, *Emma*) and speed multipliers (`0.75x` to `1.5x`).
+* **CSV-Driven Podcast Studio**: Upload multi-line CSV dialogue scripts (`speaker,voice,text`) or build episodes manually to merge multi-speaker interviews with natural silence transitions into a downloadable `.wav` master track.
+* **Speech-to-Text & Subtitle Exporter (Faster-Whisper)**: Microphone recording and audio file upload (`.wav`, `.mp3`, `.m4a`, `.webm`) with automatic FFmpeg conversion and one-click **`.SRT`** caption export.
+* **Live Audio Waveform Monitor**: Real-time canvas visualizer reacting cleanly to recording and playback states.
 
 ### 4. 🤖 Autonomous Agent Studio Pro
-* **Visual Reasoning DAG (Directed Acyclic Graph)**: Interactive cognitive timeline rendering step-by-step nodes:
-  $$\text{🎯 Goal} \longrightarrow \text{🧠 Strategy} \longrightarrow \text{⚡ Action (Tool Call)} \longrightarrow \text{📦 Sandbox Observation} \longrightarrow \text{📋 Synthesis}$$
-* **Human-in-the-Loop (HITL) Breakpoints**: Safely inspects, edits, or rejects Python code before execution in the sandbox.
-* **Process-Isolated Execution Sandbox**: Hardened child subprocess environment with strict CPU time caps and virtual memory limits (`resource.setrlimit`).
-* **Persistent Task Records**: Auto-saves completed agent audits and benchmark runs with inline title renaming, history reload, and disk workspace cleanup.
+* **Visual Reasoning DAG**: Step-by-step cognitive timeline rendering `🎯 Goal` $\rightarrow$ `🧠 Strategy` $\rightarrow$ `⚡ Tool Action` $\rightarrow$ `📦 Sandbox Observation` $\rightarrow$ `📋 Synthesis` alongside an in-studio model switcher.
+* **GBNF Grammar Engine**: Official `llama.cpp` GGML BNF logits masking (`grammar_compiler.py`) guaranteeing 100% valid, uncorrupted JSON outputs for tools and structured extraction.
+* **Human-in-the-Loop (HITL) Breakpoints**: Pause before sandbox code execution to **Approve**, **Modify Code**, or **Reject** parameters interactively.
+* **Persistent Task Records**: Auto-saves agent runs (`agent_runs` table) with inline renaming, instant retrieval, and disk workspace cleanup.
+* **Process-Isolated Sandbox**: Enforces CPU execution timeouts and memory limits (`resource.setrlimit`) alongside a conditional workspace file explorer.
 
-### 5. 🛡️ Central Model Supervisor & VRAM Arbiter
-* **80% Dynamic GPU Ceiling**: Queries NVIDIA NVML to enforce safety reserves, protecting your desktop display server and preventing Out-Of-Memory (OOM) crashes on 8GB–12GB GPUs.
-* **Dynamic Layer Calculator**: Automatically calculates how many model layers safely fit into VRAM, offloading the rest to system RAM.
+### 5. 🌐 Universal Hardware & OpenAI Compatibility
+* **Hardware Probe (`hardware_probe.py`) & Unified Memory Arbiter**: Automatically detects NVIDIA CUDA (`pynvml`), Apple Silicon Metal Unified Memory (`sysctl`/`vm_stat`), AMD ROCm, Vulkan, and CPU SIMD (`AVX2`/`AVX-512`), enforcing an 80% memory ceiling.
+* **Drop-in `/v1` Compatibility Router**: Standard OpenAI endpoints (`/v1/chat/completions`, `/v1/models`) allowing external IDE tools (Continue.dev, Cursor) and WebUIs to connect directly.
+* **HuggingFace Hub Explorer & YAML Gallery**: Search GGUF repositories with `mmproj` vision projector detection and declarative YAML model presets (`data/models/presets/`).
+* **Schema Version Tracking & Task Queue**: Records `app_schema_version` (`0.1.0`) in SQLite for safe upgrades and tracks background jobs with human-readable types in `⚡ Tasks`.
 
 ---
 
@@ -99,48 +141,50 @@ The creator and contributors of AIWA provide this software on an *"as is"* basis
 
 | Modality | Recommended Model | Format | Context / Profile | Memory Footprint |
 | :--- | :--- | :--- | :--- | :--- |
-| **Language & Vision** | **`Qwen2.5-VL-7B-Instruct`** *(or upcoming **`Qwen3-VL`**)* | GGUF (`Q4_K_M`) + `mmproj-f16.gguf` | 4,096 tokens (min) | ~4.8 GB VRAM |
+| **Language & Vision (Linux/Win)** | **`Qwen2.5-VL-7B-Instruct`** | GGUF (`Q4_K_M`) + `mmproj-f16.gguf` | 4,096 tokens (min) | ~4.8 GB VRAM |
+| **Language & Vision (macOS)** | **`Qwen3-VL-4B-Instruct-MLX-4bit`** | Apple MLX (`.safetensors` bundle) | Native Metal Unified Memory | ~3.2 GB Unified RAM |
 | **Image Generation** | **`SDXL-Turbo`** or **`DreamShaper XL Lightning`** | `.safetensors` (FP16) | 512x512 / 1024x1024, 4–25 steps | ~3.8 – 5.5 GB VRAM |
-| **Fast Image Gen** | **`Stable Diffusion 1.5 Pruned`** | `.safetensors` (FP16) | 512x512, 20–25 steps (DPM++) | ~2.2 GB VRAM |
+| **Fast Image Gen** | **`Stable Diffusion 1.5 Pruned`** | `.safetensors` (FP16) | 512x512, 20–25 steps (`DPM++ 2M Karras`) | ~2.2 GB VRAM |
 | **Speech Output (TTS)** | **`Kokoro-82M`** | PyTorch / ONNX | Multi-voice (`af_heart`, `am_adam`, `bf_emma`) | CPU (~350 MB RAM) |
 | **Speech Input (STT)** | **`Faster-Whisper (base.en / small)`** | CTranslate2 INT8 | Sentence timestamps + SRT | CPU (~250 MB RAM) |
 | **Local RAG Embeddings** | **`BAAI/bge-small-en-v1.5`** | FastEmbed ONNX | LanceDB Vector Storage | CPU (~120 MB RAM) |
 
-> 🌟 **Recommendation**: For the best multimodal experience, we strongly recommend **`Qwen2.5-VL-7B-Instruct`** (paired with its matching `mmproj` file) or the next-generation **`Qwen3-VL`** upon release. It handles both complex coding/reasoning and visual chart/image analysis in a single runtime.
-
 ---
 
-## 🛠️ Architecture
-
-AIWA enforces clean separation between application logic, runtime orchestration, and presentation:
+## 🏗️ Architecture
 
 ```text
 aiwa/
 ├── apps/
 │   └── desktop/               # Tauri v2 Desktop Shell
 │       ├── src/               # Svelte + TypeScript + Tailwind CSS Frontend
-│       │   ├── components/    # Modular Studios (Chat, Image, Voice, Agent)
+│       │   ├── components/    # Modular Studios (Chat, Image, Voice, Agent) & Views
 │       │   └── lib/           # Stores, API Client, and Types
-│       └── src-tauri/         # Rust Desktop Bridge & Lifecycle Manager
+│       └── src-tauri/         # Rust Desktop Bridge, Folder Sidecar & Capabilities
 │
 ├── backend/                   # Core Python Engine
 │   ├── app/
-│   │   ├── api/v1/            # Versioned REST & SSE Endpoints
-│   │   ├── core/              # Config, Security Tokens, Logging
-│   │   ├── database/          # SQLModel Entities & Engine
-│   │   ├── services/          # Domain Services (Chat, Media, Voice, RAG, Agents)
-│   │   └── supervisors/       # Model Supervisor & Central VRAM Arbiter
+│   │   ├── api/v1/            # REST, SSE & OpenAI Compatibility (/v1) Routers
+│   │   ├── core/              # Pydantic .env Config, Ephemeral Security, Logging
+│   │   ├── database/          # SQLModel Entities, Seeders & WAL SQLite Engine
+│   │   ├── services/          # Chat, MLX Worker, Diffusers, SD.cpp, Audio, RAG & Agents
+│   │   ├── supervisors/       # Model Supervisor, Hardware Probe & VRAM Arbiter
+│   │   └── utils/             # Safetensors Binary Header Inspector
 │   ├── migrations/            # Version-controlled Alembic Migrations
 │   └── pyproject.toml         # uv-managed reproducible dependencies
 │
 ├── data/                      # 100% Local Application Data (Git-Ignored)
-│   ├── database/              # SQLite DB (WAL Mode)
-│   ├── models/                # Local GGUF Weights & Projectors
+│   ├── avatars/               # Local disk persona avatars (with default.png fallback)
+│   ├── database/              # SQLite DB (WAL Mode + schema version tracking)
+│   ├── models/                # Local GGUF, MLX Bundles, Projectors & YAML Presets
 │   ├── uploads/               # User attachments & documents
-│   ├── generated/             # Rendered artwork and synthesized audio
+│   ├── generated/             # Rendered artwork, TTS clips & master podcasts
 │   └── vector_store/          # Embedded LanceDB tables
 │
-├── services/                  # Standalone External Binaries (llama-server)
+├── sample/                    # Application Showcase Screenshots
+├── services/                  # Standalone External Binaries
+│   ├── llama-cpp/             # Compiled llama-server
+│   └── diffusion-cpp/         # Compiled stable-diffusion.cpp (sd)
 └── Justfile                   # Unified developer task runner
 ```
 
@@ -148,20 +192,16 @@ aiwa/
 
 ## 📦 Quick Start & Installation
 
-### Prerequisites
-* **Operating System**: Linux (Ubuntu 22.04+, Debian, Arch, Fedora) or Windows via WSL2 / native.
-* **GPU**: NVIDIA GPU with 8GB+ VRAM recommended (CUDA 12+ drivers installed).
-* **Package Manager**: [`uv`](https://github.com/astral-sh/uv) (fast Python package manager).
-* **Node.js**: Node 18+ and `npm`.
-* **Rust**: `cargo` and `rustc` (required for compiling native Tauri desktop installers).
-* **System Audio Libraries**: `libsndfile1` and `ffmpeg` (for Kokoro & Whisper).
-
-```bash
-# Ubuntu / Debian system libraries:
-sudo apt update && sudo apt install -y libsndfile1 ffmpeg build-essential curl
-```
-
----
+### Linux Prerequisites (Ubuntu / Debian / Arch / Fedora)
+* **GPU**: NVIDIA GPU with 8GB+ VRAM recommended (CUDA 12+ drivers), AMD ROCm, or modern CPU.
+* **Tools**: [`uv`](https://github.com/astral-sh/uv), [`just`](https://github.com/casey/just), Node.js 18+, Rust (`cargo`), and `cmake`.
+* **System Audio & Build Libraries**:
+  ```bash
+  # Ubuntu / Debian:
+  sudo apt update && sudo apt install -y \
+      libsndfile1 ffmpeg build-essential cmake curl git \
+      libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+  ```
 
 ### 1. Clone the Repository
 ```bash
@@ -169,79 +209,139 @@ git clone https://github.com/atawfiq-it/aiwa.git
 cd aiwa
 ```
 
-### 2. Install Dependencies (Single Command)
-Install backend Python dependencies (locked via `uv`), development hooks, and desktop frontend modules:
+### 2. Install Dependencies
+Installs backend Python dependencies (including `audio`, `diffusers`, `huggingface-hub`), pre-commit security guards, and Svelte frontend modules:
 ```bash
 just install
 ```
 
-### 3. Setup `llama-server`
-Download and compile `llama-server` with native CUDA acceleration:
+### 3. Compile Core C++ Runtimes
+Compile `llama-server` (and optionally `stable-diffusion.cpp` for ultra-low VRAM image generation):
+```bash
+just install-llama
+# Optional pure C++ diffusion engine:
+just install-sd-cpp
+```
+
+### 4. Configure Environment (`.env`)
+Create a `.env` file in the repository root. Every variable below is actively wired into the application:
+```env
+# Environment & Networking
+ENVIRONMENT=development
+API_HOST=127.0.0.1
+API_PORT=8000
+
+# Hardware Acceleration ("auto", "cuda", "metal", "rocm", "vulkan", "cpu")
+AIWA_HARDWARE_ACCELERATION=auto
+MAX_GPU_USAGE_PERCENT=80.0
+VRAM_SAFETY_MARGIN_MB=1024
+
+# Model Search Directories (Comma or semicolon separated; scanned recursively on boot)
+LLM_MODEL_DIRECTORIES="/path/to/your/gguf_or_mlx/models"
+DIFFUSION_MODEL_DIRECTORIES="/path/to/your/safetensors/checkpoints"
+
+# Default Models (Auto-selected on startup & updated when switched in UI)
+DEFAULT_LLM_MODEL="Qwen2.5-VL-7B-Instruct"
+DEFAULT_DIFFUSION_MODEL="sd_xl_turbo"
+
+# Subprocess Service Ports
+LLAMA_SERVER_PORT=8080
+COMFYUI_PORT=8188
+```
+
+### 5. Launch the Workstation!
+Run both the FastAPI daemon and the desktop UI concurrently:
+```bash
+just workstation
+```
+Open **`http://localhost:5173`** in your browser (or launch via Tauri).
+
+---
+
+## 🍎 macOS Installation Guide (Apple Silicon & Intel)
+
+AIWA natively supports macOS via **Apple Silicon Metal Unified Memory** (`GGML_METAL=ON`, `mlx-lm` / `mlx-vlm`, and PyTorch MPS) as well as Intel Macs.
+
+### 1. Install Prerequisites via Homebrew
+Ensure [Xcode Command Line Tools](https://developer.apple.com/xcode/) and [Homebrew](https://brew.sh/) are installed:
+```bash
+xcode-select --install
+brew install uv just node cmake ffmpeg libsndfile rust
+```
+
+### 2. Clone & Install Dependencies
+On Apple Silicon (`arm64`), `uv sync` automatically installs `mlx-lm` and `mlx-vlm` alongside core dependencies:
+```bash
+git clone https://github.com/atawfiq-it/aiwa.git
+cd aiwa
+just install
+```
+
+### 3. Build `llama-server` with Metal Acceleration
+CMake automatically detects macOS and compiles `llama-server` with embedded **Apple Metal** shaders (`-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`):
 ```bash
 just install-llama
 ```
 
-### 4. Configure Environment (`.env`)
-Create a `.env` file in the root directory to define your custom model search paths:
+### 4. Configure `.env` for macOS
+Create `.env` in the repository root (works seamlessly with both `.gguf` and `.safetensors` MLX directories):
 ```env
-# Root .env configuration
 ENVIRONMENT=development
+API_HOST=127.0.0.1
+API_PORT=8000
+
+# Automatically queries Apple Unified Memory via sysctl & vm_stat
+AIWA_HARDWARE_ACCELERATION=auto
 MAX_GPU_USAGE_PERCENT=80.0
 
-# Add paths to your existing diffusion models (comma-separated)
-DIFFUSION_MODEL_DIRECTORIES="/path/to/your/checkpoints,/path/to/another/folder"
+LLM_MODEL_DIRECTORIES="/Users/yourname/models/LLM"
+DIFFUSION_MODEL_DIRECTORIES="/Users/yourname/models/Checkpoints"
+DEFAULT_LLM_MODEL="Qwen3-VL-4B-Instruct-MLX-4bit"
 ```
 
-### 5. Launch the Workstation!
-Run both the FastAPI daemon and the desktop UI with one command:
+### 5. Launch on macOS
 ```bash
 just workstation
 ```
-Open **`http://localhost:5173`** in your browser, or interact through the native desktop shell.
 
 ---
 
-## 🩺 System Diagnostics (`just doctor`)
+## 🩺 System & Grammar Diagnostics
 
-Verify your CUDA driver, VRAM arbiter, database, and installed runtimes in 2 seconds:
+### Hardware & Environment Check (`just doctor`)
 ```bash
 just doctor
 ```
+Verifies Python, CUDA/Metal availability, Unified Memory / VRAM Arbiter ceiling, `llama-server`, SQLite schema (`v0.1.0`), and configured `.env` paths.
 
-Output:
-```text
-=== AIWA SYSTEM DIAGNOSTICS ===
-Python: 3.11.x
-CUDA Available: True
-GPU Device: NVIDIA GeForce RTX (8.0 GB)
-VRAM Arbiter: {'total_mb': 8192, 'allowed_ceiling_mb': 6553, 'free_mb': ...}
-llama-server: FOUND
-Database: FOUND (Schema v0.1.0)
-================================
+### GBNF Grammar Test (`just test-grammar`)
+```bash
+just test-grammar
 ```
+Tests constrained JSON logits masking against a live Pydantic schema to verify zero-hallucination structured extraction.
 
 ---
 
-## 📦 Building Native Desktop Installers (.AppImage & .deb)
+## 📦 Building Native Desktop Installers (`.AppImage` & `.deb`)
 
-Package AIWA into standalone, native Linux desktop bundles featuring your system's OS window decorations and an embedded folder-based Python sidecar:
+Package AIWA into standalone Linux desktop bundles with standard OS window frames and an embedded folder-based Python sidecar (`--onedir`):
 
 ```bash
 just package-desktop
 ```
 
-Generated bundles will be ready in:
-* `apps/desktop/src-tauri/target/release/bundle/appimage/AIWA_0.1.0_amd64.AppImage`
-* `apps/desktop/src-tauri/target/release/bundle/deb/aiwa_0.1.0_amd64.deb`
+Generated bundles are placed in:
+* **AppImage**: `apps/desktop/src-tauri/target/release/bundle/appimage/AIWA_0.1.0_amd64.AppImage`
+* **Debian Package**: `apps/desktop/src-tauri/target/release/bundle/deb/aiwa_0.1.0_amd64.deb`
 
 ---
 
 ## 🔒 Security & Data Privacy First
 
-* **Zero External Telemetry**: No prompt, code, document, or audio snippet is ever sent to external cloud APIs by default.
-* **Strict Git Shielding**: Pre-commit hooks automatically block any accidental commit of database files (`.db`), session tokens, private uploads, or weights exceeding 10 MB.
-* **Local Loopback Security**: The backend daemon binds strictly to `127.0.0.1` protected by ephemeral session tokens.
-* **Subprocess Sandboxing**: Agent-executed Python code runs in an isolated temporary environment with hard memory caps (`RLIMIT_AS`) and CPU execution timeouts.
+* **Zero External Telemetry**: No prompt, code, document, avatar, or audio snippet ever leaves your machine.
+* **Strict Git Shielding**: `.gitignore` and automated pre-commit hooks block any commit containing SQLite databases (`.db`), session tokens, `.env` secrets, uploads, or model files exceeding 10 MB.
+* **Local Loopback Security**: FastAPI binds strictly to `127.0.0.1` protected by ephemeral session tokens (`data/.aiwa_session_token`).
+* **Subprocess Sandboxing**: Agent Python code runs inside isolated workspaces with strict CPU time caps and memory limits (`resource.setrlimit`).
 
 ---
 
@@ -249,18 +349,26 @@ Generated bundles will be ready in:
 
 AIWA is actively evolving, and contributions from the developer and AI research community are warmly welcomed!
 
-### Roadmap Ahead:
-- [ ] Windows native packaging (`.exe` via NSIS & `.msi` via WiX).
-- [ ] Visual multi-agent swarm planner and task orchestrator.
-- [ ] Web search integration tool for the Research Analyst agent.
-- [ ] HuggingFace GGUF one-click in-app downloader polish.
+### Roadmap Progress & Upcoming Milestones:
+- [x] HuggingFace GGUF & `mmproj` Model Explorer UI.
+- [x] Native Apple Silicon MLX (`mlx-lm` / `mlx-vlm`) runtime & `.safetensors` header classification.
+- [x] GBNF Grammar Engine for 100% valid JSON structured outputs.
+- [x] `stable-diffusion.cpp` pure C++ diffusion adapter.
+- [x] Drop-in `/v1` OpenAI Compatibility Router.
+- [x] Native Linux `.AppImage` and `.deb` packaging.
+- [ ] AMD ROCm / Vulkan universal builds.
+- [ ] Declarative YAML Model Gallery presets.
+- [ ] Native Windows packaging (`.exe` via NSIS & `.msi` via WiX).
 
 ### Ways to Contribute:
 1. **Report Bugs & Suggest Features**: Open an [Issue](https://github.com/atawfiq-it/aiwa/issues).
 2. **Submit Pull Requests**: Fork the repository, create your feature branch, and submit a PR!
-3. **Model Presets**: Share tested prompt templates and parameter profiles for new GGUF / diffusion models.
+3. **Model Presets**: Share tested YAML presets under `data/models/presets/` for community GGUF, MLX, and diffusion models.
 
 ### Get in Touch:
 * **Creator**: Ahmed Tawfiq
 * **GitHub**: [@atawfiq-it](https://github.com/atawfiq-it)
 * **LinkedIn**: [linkedin.com/in/amtawfiq](https://linkedin.com/in/amtawfiq)
+```
+
+---

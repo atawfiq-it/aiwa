@@ -12,7 +12,8 @@ from sse_starlette.sse import ServerSentEvent
 
 from app.core.config import settings
 from app.database.engine import engine
-from app.database.models import Agent
+from app.database.models import Agent, AgentRunRecord
+from app.services.agents.grammar_compiler import grammar_compiler
 from app.services.agents.tools import TOOL_REGISTRY, get_openai_tools_schema
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
@@ -31,7 +32,7 @@ class AgentRunner:
         require_human_approval: bool = False,
         max_iterations: int = 5,
     ) -> AsyncGenerator[ServerSentEvent, None]:
-        """Runs the autonomous agent reasoning loop emitting structured DAG nodes over SSE."""
+        """Runs the autonomous agent tool-calling reasoning loop emitting structured DAG nodes over SSE."""
         if model_supervisor.state != ModelState.READY or not model_supervisor.active_model:
             yield ServerSentEvent(
                 event="error",
@@ -46,13 +47,10 @@ class AgentRunner:
         with Session(engine) as db:
             agent = db.get(Agent, agent_id)
             if not agent:
-                yield ServerSentEvent(
-                    event="error",
-                    data=json.dumps({"error": "Agent configuration not found."}),
-                )
+                yield ServerSentEvent(event="error", data=json.dumps({"error": "Agent not found."}))
                 return
 
-        allowed_tools = json.loads(agent.tools_json) if agent.tools_json else []
+        allowed_tools = json.loads(agent.tools_json)
         tools_schema = get_openai_tools_schema(allowed_tools)
 
         messages: list[dict[str, Any]] = [
@@ -60,7 +58,7 @@ class AgentRunner:
             {"role": "user", "content": user_prompt},
         ]
 
-        # 1. Emit Agent Initialized Event
+        # 1. Emit Agent Initialized
         yield ServerSentEvent(
             event="agent_started",
             data=json.dumps(
@@ -87,7 +85,8 @@ class AgentRunner:
             ),
         )
 
-        # 3. Emit Planning Strategy Node
+        # 3. Emit Strategy & Planning Node
+        tool_names_str = ", ".join(allowed_tools) if allowed_tools else "None"
         yield ServerSentEvent(
             event="dag_node",
             data=json.dumps(
@@ -95,49 +94,43 @@ class AgentRunner:
                     "node_id": "step_plan",
                     "node_type": "planning",
                     "title": f"🧠 Strategy: {agent.name}",
-                    "content": (
-                        f"Initializing reasoning loop with bound tools: "
-                        f"{', '.join(allowed_tools) if allowed_tools else 'None'}. "
-                        "Evaluating constraints and test boundaries..."
-                    ),
+                    "content": f"Initializing reasoning loop with bound tools: {tool_names_str}. Evaluating boundaries...",
                     "status": "completed",
                 }
             ),
         )
 
-        timeout_config = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=None)
-
-        async with httpx.AsyncClient(timeout=timeout_config) as client:
+        async with httpx.AsyncClient(timeout=180.0) as client:
             for iteration in range(max_iterations):
                 step_id = f"step_{iteration + 1}"
                 t0 = time.time()
+                logger.info(
+                    f"Agent '{agent.name}' reasoning turn {iteration + 1}/{max_iterations}..."
+                )
 
                 payload = {
                     "messages": messages,
                     "tools": tools_schema if tools_schema else None,
                     "tool_choice": "auto" if tools_schema else None,
-                    "temperature": 0.2,
+                    "temperature": 0.1,  # Low temperature for deterministic schema adherence
                     "stream": False,
                 }
 
-                try:
-                    res = await client.post(
-                        f"{model_supervisor.base_url}/v1/chat/completions",
-                        json=payload,
-                    )
-                except Exception as e:
-                    yield ServerSentEvent(
-                        event="error",
-                        data=json.dumps({"error": f"Failed connecting to model: {e}"}),
-                    )
-                    return
+                # Enforce GBNF grammar if single tool is active to guarantee valid JSON arguments
+                if allowed_tools:
+                    first_tool = TOOL_REGISTRY.get(allowed_tools[0])
+                    if first_tool and first_tool.parameters:
+                        compiled_grammar = grammar_compiler.compile_schema(first_tool.parameters)
+                        payload["grammar"] = compiled_grammar
 
+                res = await client.post(
+                    f"{model_supervisor.base_url}/v1/chat/completions",
+                    json=payload,
+                )
                 if res.status_code != 200:
                     yield ServerSentEvent(
                         event="error",
-                        data=json.dumps(
-                            {"error": f"LLM error (HTTP {res.status_code}): {res.text}"}
-                        ),
+                        data=json.dumps({"error": f"Inference engine error: {res.text}"}),
                     )
                     return
 
@@ -146,7 +139,6 @@ class AgentRunner:
                 content = choice.get("content", "") or ""
                 tool_calls = choice.get("tool_calls", [])
 
-                # If the agent decided to call one or more tools
                 if tool_calls:
                     for tc in tool_calls:
                         func_name = tc["function"]["name"]
@@ -157,14 +149,14 @@ class AgentRunner:
                         except json.JSONDecodeError:
                             args = {"code": raw_args}
 
-                        # Emit Tool Call Action Node
+                        # 4. Emit Action / Tool Invocation Node
                         yield ServerSentEvent(
                             event="dag_node",
                             data=json.dumps(
                                 {
                                     "node_id": f"{step_id}_tool",
                                     "node_type": "tool_call",
-                                    "title": f"⚡ Action: {func_name}",
+                                    "title": f"Action: {func_name}",
                                     "tool_name": func_name,
                                     "arguments": args,
                                     "status": "running",
@@ -172,7 +164,7 @@ class AgentRunner:
                             ),
                         )
 
-                        # Check Human-in-the-Loop Breakpoint
+                        # 5. Handle Human-in-the-Loop Breakpoint
                         if require_human_approval:
                             yield ServerSentEvent(
                                 event="approval_required",
@@ -185,7 +177,6 @@ class AgentRunner:
                                 ),
                             )
 
-                            # Wait for user decision
                             event = asyncio.Event()
                             PENDING_APPROVALS[run_id] = event
                             try:
@@ -203,12 +194,12 @@ class AgentRunner:
 
                             decision = APPROVAL_DECISIONS.pop(run_id, {"action": "approve"})
                             if decision.get("action") == "reject":
-                                tool_result = "Execution rejected by user."
+                                tool_result = "Tool execution rejected by human operator."
                             else:
                                 if "modified_args" in decision:
                                     args = decision["modified_args"]
 
-                        # Execute registered tool
+                        # 6. Execute Tool
                         tool_def = TOOL_REGISTRY.get(func_name)
                         if not tool_def:
                             tool_result = f"Error: Tool '{func_name}' is not registered."
@@ -216,26 +207,26 @@ class AgentRunner:
                             try:
                                 tool_result = tool_def.handler(**args)
                             except Exception as e:
-                                tool_result = f"Execution error: {e}"
+                                tool_result = f"Tool execution error: {e}"
 
-                        duration_ms = round((time.time() - t0) * 1000)
+                        duration = round((time.time() - t0) * 1000)
 
-                        # Emit Observation Node
+                        # 7. Emit Observation Node
                         yield ServerSentEvent(
                             event="dag_node",
                             data=json.dumps(
                                 {
                                     "node_id": f"{step_id}_obs",
                                     "node_type": "observation",
-                                    "title": f"📦 Observation ({func_name})",
+                                    "title": f"Observation ({func_name})",
                                     "output": tool_result,
-                                    "duration_ms": duration_ms,
+                                    "duration_ms": duration,
                                     "status": "completed",
                                 }
                             ),
                         )
 
-                        # Append results to message context
+                        # Feed output back into conversation history
                         messages.append(
                             {
                                 "role": "assistant",
@@ -252,10 +243,7 @@ class AgentRunner:
                             }
                         )
                 else:
-                    # Final synthesis reached: Emit solely via agent_completed
                     # Final synthesis reached: Persist completed run to SQLite
-                    from app.database.models import AgentRunRecord
-
                     task_title = (
                         user_prompt.strip().split("\n")[0][:40] + "..."
                         if len(user_prompt.strip().split("\n")[0]) > 40
@@ -274,6 +262,7 @@ class AgentRunner:
                         db.add(saved_record)
                         db.commit()
 
+                    # Emit single completion event (avoids duplicate text rendering)
                     yield ServerSentEvent(
                         event="agent_completed",
                         data=json.dumps(
@@ -288,7 +277,7 @@ class AgentRunner:
 
             yield ServerSentEvent(
                 event="error",
-                data=json.dumps({"error": "Reached maximum reasoning turn limit."}),
+                data=json.dumps({"error": "Reached maximum reasoning turns without conclusion."}),
             )
 
 

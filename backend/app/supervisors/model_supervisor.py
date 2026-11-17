@@ -1,7 +1,8 @@
 import asyncio
 import logging
-import os
+import platform
 import subprocess
+import sys
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -39,25 +40,25 @@ class ModelSupervisor:
     def base_url(self) -> str:
         return f"http://{settings.LLAMA_SERVER_HOST}:{settings.LLAMA_SERVER_PORT}"
 
-    def get_status(self) -> dict[str, Any]:
-        return {
-            "state": self.state.value,
-            "active_model_id": self.active_model.id if self.active_model else None,
-            "active_model_name": self.active_model.display_name if self.active_model else None,
-            "active_requests": self.active_requests,
-            "available_slots": self.slot_semaphore._value,
-            "last_active_at": self.last_active_at.isoformat() if self.last_active_at else None,
-            "vram": vram_arbiter.get_vram_status(),
-        }
-
     def is_idle_for(self, seconds: float) -> bool:
-        """Returns True if there are zero active inference requests and idle duration exceeds threshold."""
+        """Returns True if no active requests exist and idle duration exceeds threshold."""
         if self.active_requests > 0:
             return False
         if not self.last_active_at:
             return True
         elapsed = (datetime.now(UTC) - self.last_active_at).total_seconds()
         return elapsed >= seconds
+
+    def get_status(self) -> dict[str, Any]:
+        return {
+            "state": self.state.value,
+            "active_model_id": self.active_model.id if self.active_model else None,
+            "active_model_name": (self.active_model.display_name if self.active_model else None),
+            "active_requests": self.active_requests,
+            "available_slots": self.slot_semaphore._value,
+            "last_active_at": (self.last_active_at.isoformat() if self.last_active_at else None),
+            "vram": vram_arbiter.get_vram_status(),
+        }
 
     async def load_model(self, model: ModelConfig) -> None:
         async with self.lock:
@@ -68,98 +69,92 @@ class ModelSupervisor:
             if self.active_requests > 0:
                 raise RuntimeError("Cannot switch models while inference requests are active")
 
-            # Unload any currently running instance first
             if self.process:
                 await self._stop_process()
 
-            model_path = Path(model.file_path).resolve()
+            model_path = Path(model.file_path)
             if not model_path.exists():
                 self.state = ModelState.FAILED
-                raise FileNotFoundError(f"Model file not found at: {model.file_path}")
-
-            # Verify and resolve multimodal projector for vision models
-            mmproj_resolved: Path | None = None
-            if model.vision_supported and model.mmproj_path:
-                mmproj_resolved = Path(model.mmproj_path).resolve()
-                if not mmproj_resolved.exists():
-                    self.state = ModelState.FAILED
-                    raise FileNotFoundError(
-                        f"Multimodal projector file not found at: {model.mmproj_path}"
-                    )
-
-            # Auto-tune layers to fit inside the configured GPU budget (e.g. 80% ceiling)
-            if model.gpu_layers == -1:
-                calculated_layers = vram_arbiter.calculate_optimal_gpu_layers(
-                    file_size_bytes=model_path.stat().st_size,
-                    context_length=model.context_length,
-                    total_model_layers=36,
-                )
-                logger.info(
-                    f"Auto-tuned GPU layers: offloading {calculated_layers}/36 layers to GPU "
-                    f"to respect {settings.MAX_GPU_USAGE_PERCENT}% ceiling."
-                )
-            else:
-                calculated_layers = model.gpu_layers
+                raise FileNotFoundError(f"Model path not found at: {model.file_path}")
 
             self.state = ModelState.LOADING
             self.active_model = model
 
-            server_bin = Path(settings.LLAMA_SERVER_BIN).resolve()
+            # Explicit directory / MLX check (never pass a directory to llama-server)
+            is_mlx = model.format == "mlx" or (
+                model_path.is_dir() and (model_path / "config.json").exists()
+            )
+            is_vision = model.vision_supported or (
+                model_path.is_dir() and (model_path / "preprocessor_config.json").exists()
+            )
 
-            effective_ctx_per_slot = max(model.context_length, 4096)
-            total_server_context = effective_ctx_per_slot * settings.LLAMA_PARALLEL_SLOTS
+            if is_mlx:
+                if platform.system() != "Darwin":
+                    raise RuntimeError("MLX models are only supported on macOS Apple Silicon.")
 
-            if total_server_context != model.context_length:
-                logger.info(
-                    f"Elevating context length from {model.context_length} to "
-                    f"{total_server_context} to support system personas and vision tokens."
+                worker_script = (
+                    Path(__file__).resolve().parent.parent / "services" / "models" / "mlx_worker.py"
                 )
+                cmd = [
+                    sys.executable,
+                    str(worker_script),
+                    "--model",
+                    str(model_path),
+                    "--host",
+                    settings.LLAMA_SERVER_HOST,
+                    "--port",
+                    str(settings.LLAMA_SERVER_PORT),
+                ]
+                if is_vision:
+                    cmd.append("--vision")
+                logger.info(f"🍎 Spawning Apple MLX Worker (Vision={is_vision}): {' '.join(cmd)}")
+            else:
+                if model_path.is_dir():
+                    raise RuntimeError(f"Cannot load directory '{model_path}' with llama-server.")
 
-            cmd = [
-                settings.LLAMA_SERVER_BIN,
-                "-m",
-                str(model_path),
-                "-c",
-                str(total_server_context),
-                "-ngl",
-                str(calculated_layers),
-                "--host",
-                settings.LLAMA_SERVER_HOST,
-                "--port",
-                str(settings.LLAMA_SERVER_PORT),
-                "--parallel",
-                str(settings.LLAMA_PARALLEL_SLOTS),
-                "--media-path",
-                str(settings.UPLOADS_DIR.resolve()),
-            ]
+                calculated_layers = (
+                    vram_arbiter.calculate_optimal_gpu_layers(
+                        file_size_bytes=model_path.stat().st_size,
+                        context_length=model.context_length,
+                        total_model_layers=28,
+                    )
+                    if model.gpu_layers == -1
+                    else model.gpu_layers
+                )
+                effective_ctx_per_slot = max(model.context_length, 4096)
+                total_server_context = effective_ctx_per_slot * settings.LLAMA_PARALLEL_SLOTS
 
-            # Fix for custom/experimental architecture tags (qwen3 -> qwen2)
-            # if "qwen3" in model_path.name.lower() or "qwen3" in str(model_path).lower():
-            #     logger.info("Applying metadata override: general.architecture=str:qwen2")
-            #     cmd.extend(["--override-kv", "general.architecture=str:qwen2"])
+                cmd = [
+                    settings.LLAMA_SERVER_BIN,
+                    "-m",
+                    str(model_path),
+                    "-c",
+                    str(total_server_context),
+                    "-ngl",
+                    str(calculated_layers),
+                    "--host",
+                    settings.LLAMA_SERVER_HOST,
+                    "--port",
+                    str(settings.LLAMA_SERVER_PORT),
+                    "--parallel",
+                    str(settings.LLAMA_PARALLEL_SLOTS),
+                    "--media-path",
+                    str(settings.UPLOADS_DIR.resolve()),
+                ]
 
-            if model.vision_supported and model.mmproj_path:
-                cmd.extend(["--mmproj", str(model.mmproj_path)])
+                if is_vision and model.mmproj_path:
+                    cmd.extend(["--mmproj", str(model.mmproj_path)])
 
-            if mmproj_resolved:
-                cmd.extend(["--mmproj", str(mmproj_resolved)])
-
-            # Inject LD_LIBRARY_PATH so dynamic linker locates libllama.so
-            server_dir = str(server_bin.parent)
-            proc_env = os.environ.copy()
-            current_ld = proc_env.get("LD_LIBRARY_PATH", "")
-            proc_env["LD_LIBRARY_PATH"] = f"{server_dir}:{current_ld}" if current_ld else server_dir
+                logger.info(f"Spawning llama-server: {' '.join(cmd)}")
 
             try:
-                logger.info(f"Spawning llama-server: {' '.join(cmd)}")
-                # Do not hide stdout/stderr in a blind pipe; inherit or log so progress is visible
                 self.process = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=None,  # Prints llama.cpp load progress directly to daemon terminal
+                    stdin=subprocess.DEVNULL,
+                    stdout=None,
+                    stderr=None,
                 )
 
-                # Wait for server /health readiness (increased to 120s)
                 await self._wait_for_ready(timeout_seconds=120)
                 self.state = ModelState.READY
                 self.last_active_at = datetime.now(UTC)
@@ -167,14 +162,14 @@ class ModelSupervisor:
             except Exception as e:
                 self.state = ModelState.FAILED
                 await self._stop_process()
-                logger.error(f"Failed to start llama-server: {e}")
+                logger.error(f"Failed to start inference engine: {e}")
                 raise
 
     async def _wait_for_ready(self, timeout_seconds: int = 120) -> None:
         async with httpx.AsyncClient() as client:
             for _ in range(timeout_seconds):
                 if self.process and self.process.poll() is not None:
-                    raise RuntimeError("llama-server terminated unexpectedly.")
+                    raise RuntimeError("Inference engine terminated unexpectedly.")
                 try:
                     res = await client.get(f"{self.base_url}/health", timeout=1.0)
                     if res.status_code == 200:
@@ -182,9 +177,7 @@ class ModelSupervisor:
                 except httpx.RequestError:
                     pass
                 await asyncio.sleep(1)
-        raise TimeoutError(
-            f"Timed out after {timeout_seconds}s waiting for llama-server readiness."
-        )
+        raise TimeoutError(f"Timed out after {timeout_seconds}s waiting for inference readiness.")
 
     async def unload_model(self) -> None:
         async with self.lock:

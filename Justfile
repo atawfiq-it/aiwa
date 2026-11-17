@@ -93,7 +93,7 @@ test:
 
 # Start the FastAPI backend daemon with live reloading
 dev:
-    cd backend && uv run python -m app.main
+    uv run --project backend uvicorn app.main:app --reload --reload-dir backend/app --app-dir backend --host 127.0.0.1 --port 8000
 
 # Start the Svelte desktop UI in local browser dev mode (http://localhost:5173)
 ui-dev:
@@ -116,12 +116,12 @@ migrate-up:
 # ------------------------------------------------------------------------------
 
 # Register a local GGUF model and multimodal projector into the workstation
-register-model model mmproj="" name="Qwen3-VL-8B" ctx="4096":
-    python3 scripts/register_local_model.py \
-        --model "{{model}}" \
-        --mmproj "{{mmproj}}" \
-        --name "{{name}}" \
-        --ctx "{{ctx}}"
+# register-model model mmproj="" name="Qwen3-VL-8B" ctx="4096":
+#     python3 scripts/register_local_model.py \
+#         --model "{{model}}" \
+#         --mmproj "{{mmproj}}" \
+#         --name "{{name}}" \
+#         --ctx "{{ctx}}"
 
 # ------------------------------------------------------------------------------
 # 6. Production Packaging & Native Sidecar Build
@@ -146,9 +146,21 @@ build-desktop: build-backend-sidecar
     cd apps/desktop && npm run tauri build
 
 
-# Download precompiled CUDA llama-server binary
+# Download and compile llama-server (CUDA on Linux, Metal on macOS)
 install-llama:
-    python3 scripts/download_llama_server.py
+    uv run --project backend python scripts/download_llama_server.py
+
+# Build pure C++ stable-diffusion.cpp binary
+install-sd-cpp:
+    uv run --project backend python scripts/setup_sd_cpp.py
+
+# Register local GGUF model with vision projector
+register-model model mmproj="" name="Qwen3-VL-8B":
+    uv run --project backend python scripts/register_local_model.py --model "{{model}}" --mmproj "{{mmproj}}" --name "{{name}}"
+
+# Package Python folder-based sidecar runtime
+package-sidecar:
+    uv run --project backend python scripts/package_sidecar.py
 
 # Run both Backend and Desktop UI concurrently in one terminal
 workstation:
@@ -159,8 +171,8 @@ install-comfyui checkpoints="":
     python3 scripts/setup_comfyui.py --checkpoints "{{checkpoints}}"
 
 # Package Python folder-based sidecar runtime
-package-sidecar:
-    python3 scripts/package_sidecar.py
+# package-sidecar:
+#    python3 scripts/package_sidecar.py
 
 # Build native Linux standalone installers (.AppImage & .deb)
 package-desktop:

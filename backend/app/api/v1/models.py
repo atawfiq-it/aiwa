@@ -68,6 +68,7 @@ class ScanRequest(BaseModel):
 class RegisterScannedModelRequest(BaseModel):
     display_name: str
     file_path: str
+    format: str = "gguf"  # Added format support
     mmproj_path: str | None = None
     context_length: int = 4096
     vision_supported: bool = False
@@ -91,26 +92,41 @@ def scan_local_models(req: ScanRequest):
 
 
 @router.post("/register-scanned", response_model=ModelConfig)
+@router.post("/register-scanned", response_model=ModelConfig)
 def register_scanned_model(
     req: RegisterScannedModelRequest,
     db: Session = Depends(get_db),
 ):
-    """Registers a scanned model into SQLite configuration."""
     model_path = Path(req.file_path)
     if not model_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
+        raise HTTPException(status_code=404, detail=f"Path not found: {req.file_path}")
 
-    # Check if already registered
-    existing = db.exec(select(ModelConfig).where(ModelConfig.file_path == req.file_path)).first()
+    existing = db.exec(
+        select(ModelConfig).where(ModelConfig.file_path == str(model_path.resolve()))
+    ).first()
     if existing:
+        existing.format = req.format
         existing.context_length = max(req.context_length, 4096)
-        if req.mmproj_path:
-            existing.mmproj_path = req.mmproj_path
-            existing.vision_supported = True
+        existing.vision_supported = req.vision_supported
         db.add(existing)
         db.commit()
         db.refresh(existing)
         return existing
+
+    model = ModelConfig(
+        display_name=req.display_name,
+        file_path=str(model_path.resolve()),
+        format=req.format,
+        context_length=max(req.context_length, 4096),
+        vision_supported=req.vision_supported,
+        mmproj_path=req.mmproj_path,
+        gpu_layers=-1,
+        is_default=req.is_default,
+    )
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+    return model
 
 
 class ModelRegisterRequest(BaseModel):
@@ -127,15 +143,18 @@ class ModelRegisterRequest(BaseModel):
 
 @router.get("", response_model=list[ModelConfig])
 def list_models(db: Session = Depends(get_db)):
-    """Lists registered models, strictly filtering out any directories or nonexistent files."""
+    """Lists registered GGUF files and valid MLX model directories."""
     all_models = db.exec(select(ModelConfig)).all()
     valid_models = []
 
     for m in all_models:
         p = Path(m.file_path)
-        # Only return models that are real existing files, NEVER directories
-        if p.exists() and p.is_file() and not p.is_dir():
-            valid_models.append(m)
+        if m.format == "mlx":
+            if p.exists() and p.is_dir() and (p / "config.json").exists():
+                valid_models.append(m)
+        else:
+            if p.exists() and p.is_file() and not p.is_dir():
+                valid_models.append(m)
 
     return valid_models
 
@@ -207,21 +226,11 @@ async def load_model(model_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Model configuration not found",
         )
-
-    # Persist as new default in SQLite
-    all_models = db.exec(select(ModelConfig)).all()
-    for m in all_models:
-        m.is_default = m.id == model_id
-        db.add(m)
-    db.commit()
-
     try:
         await model_supervisor.load_model(model)
-        return {
-            "status": "success",
-            "message": f"Model {model.display_name} loaded and set as default",
-        }
+        return {"status": "success", "message": f"Model {model.display_name} loaded"}
     except Exception as e:
+        logger.error(f"Error loading model {model_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),

@@ -10,6 +10,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"], dependencies=[Depends(verify_l
 
 @router.post("/completions")
 async def chat_completions(req: ChatRequest):
+    """Streams multimodal chat completions with persona directives, RAG retrieval, and GBNF grammar constraints."""
     return EventSourceResponse(
         stream_chat_completion(
             messages=req.messages,
@@ -20,5 +21,6 @@ async def chat_completions(req: ChatRequest):
             knowledge_base_id=req.knowledge_base_id,
             temperature=req.temperature,
             max_tokens=req.max_tokens,
+            json_schema=req.json_schema,
         )
     )

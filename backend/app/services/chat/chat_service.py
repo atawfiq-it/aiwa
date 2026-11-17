@@ -1,5 +1,4 @@
 import base64
-import io
 import json
 import logging
 import mimetypes
@@ -16,6 +15,7 @@ from sse_starlette.sse import ServerSentEvent
 from app.database.engine import engine
 from app.database.models import Character, Conversation, Message
 from app.schemas.chat import ChatMessage
+from app.services.agents.grammar_compiler import grammar_compiler
 from app.services.embeddings.rag_service import rag_service
 from app.supervisors.model_supervisor import ModelState, model_supervisor
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def file_to_data_url(file_path: str, max_dimension: int = 1024) -> str:
-    """Reads, resizes to prevent VLM token blowout, and encodes image as Base64 Data URL."""
+    """Reads, optionally resizes, and converts a local image to a base64 Data URL."""
     path = Path(file_path).resolve()
     mime_type, _ = mimetypes.guess_type(path)
     if not mime_type:
@@ -34,6 +34,8 @@ def file_to_data_url(file_path: str, max_dimension: int = 1024) -> str:
             img = img.convert("RGB")
             if max(img.size) > max_dimension:
                 img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+            import io
+
             buffered = io.BytesIO()
             img.save(buffered, format="JPEG", quality=85)
             encoded = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -48,10 +50,10 @@ def format_messages_for_llm(
     messages: list[ChatMessage],
     knowledge_base_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Formats messages for llama.cpp OpenAI endpoint with RAG context and Base64 images."""
+    """Formats chat messages for llama.cpp OpenAI-compatible API, injecting RAG context and vision URLs."""
     formatted = []
-
     rag_context = ""
+
     if knowledge_base_id and messages:
         last_user_msg = next((m.content for m in reversed(messages) if m.role == "user"), None)
         if last_user_msg:
@@ -95,49 +97,46 @@ async def stream_chat_completion(
     knowledge_base_id: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 4096,
+    json_schema: dict[str, Any] | None = None,
 ) -> AsyncGenerator[ServerSentEvent, None]:
-    """Streams chat completions from llama-server, enforcing character personas and logging."""
+    """Streams tokens from llama.cpp over SSE with persona directives, RAG context, and GBNF grammars."""
     if model_supervisor.state != ModelState.READY or not model_supervisor.active_model:
         err_msg = (
             "No language model is currently loaded in GPU VRAM. "
-            "Please select a model from the top header and click 'Apply'."
+            "Please select a model from the header and click 'Apply'."
         )
         yield ServerSentEvent(event="error", data=json.dumps({"error": err_msg}))
         return
 
+    # Check vision capability
     has_images = any(len(m.image_paths or []) > 0 for m in messages)
     if has_images and not model_supervisor.active_model.vision_supported:
         err_msg = (
-            f"Active model '{model_supervisor.active_model.display_name}' "
-            "does not support vision. Please load a multimodal model with mmproj."
+            f"Active model '{model_supervisor.active_model.display_name}' does not support vision."
         )
         yield ServerSentEvent(event="error", data=json.dumps({"error": err_msg}))
         return
 
-    # --- RESOLVE PERSONA WITH MULTI-TIER FALLBACK ---
+    # 1. Multi-Tier Character Persona Resolution
     active_char_name = "None (Default Assistant)"
     active_prompt_text = ""
 
     with Session(engine) as db:
         char = None
 
-        # 1. Resolve by character_id (UUID or name string)
         if character_id:
             char = db.get(Character, character_id)
             if not char:
                 char = db.exec(select(Character).where(Character.name == character_id)).first()
 
-        # 2. Resolve by character_name
         if not char and character_name:
             char = db.exec(select(Character).where(Character.name == character_name)).first()
 
-        # 3. Resolve from active conversation in SQLite
         if not char and conversation_id:
             conv = db.get(Conversation, conversation_id)
             if conv and conv.character_id:
                 char = db.get(Character, conv.character_id)
 
-        # 4. Fallback to default first character
         if not char:
             char = db.exec(select(Character)).first()
 
@@ -152,28 +151,28 @@ async def stream_chat_completion(
                 f"### END SYSTEM INSTRUCTION - MAINTAIN THIS PERSONA STRICTLY ###"
             )
 
-            # Strip existing system prompts and place authoritative persona directive first
             messages = [ChatMessage(role="system", content=persona_instruction)] + [
                 m for m in messages if m.role != "system"
             ]
 
-    # --- HIGH-VISIBILITY DIAGNOSTIC LOGGING ---
+    # 2. Terminal Diagnostic Logging
     print("\n" + "=" * 65)
     print("🎭 [AIWA PERSONA DIAGNOSTICS]")
     print(f"   -> Character ID received:   {character_id}")
     print(f"   -> Character Name received: {character_name}")
-    print(f"   -> Resolved Active Persona: {active_char_name}")
+    print(f"   -> Resolved Persona:        {active_char_name}")
     print(f"   -> Applied Temperature:     {temperature}")
-    print(f"   -> System Prompt Preview:   {active_prompt_text[:110]}...")
+    print(f"   -> System Prompt Preview:   {active_prompt_text[:100]}...")
     print("-" * 65)
     formatted_payload = format_messages_for_llm(messages, knowledge_base_id)
     print("📨 [PAYLOAD DISPATCHED TO LLAMA-SERVER]:")
     for idx, msg in enumerate(formatted_payload):
         role = msg.get("role", "unknown")
-        content_preview = str(msg.get("content", ""))[:130].replace("\n", " ")
+        content_preview = str(msg.get("content", ""))[:120].replace("\n", " ")
         print(f"   [{idx}] Role: {role:<9} | Content: {content_preview}...")
     print("=" * 65 + "\n")
 
+    # Acquire concurrency slot semaphore
     await model_supervisor.slot_semaphore.acquire()
     model_supervisor.active_requests += 1
 
@@ -183,14 +182,20 @@ async def stream_chat_completion(
 
     try:
         url = f"{model_supervisor.base_url}/v1/chat/completions"
-        payload = {
+        payload: dict[str, Any] = {
             "messages": formatted_payload,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
         }
 
-        # Infinite streaming read timeout so long answers never cut off at 120s
+        # 3. GBNF Grammar Logits Masking Enforcement
+        if json_schema:
+            compiled_grammar = grammar_compiler.compile_schema(json_schema)
+            payload["grammar"] = compiled_grammar
+            logger.info("Enforced GBNF grammar on chat completion stream.")
+
+        # Infinite read timeout for long answer generations
         timeout_config = httpx.Timeout(connect=15.0, read=None, write=30.0, pool=None)
 
         async with httpx.AsyncClient(timeout=timeout_config) as client:
@@ -232,9 +237,9 @@ async def stream_chat_completion(
                         except json.JSONDecodeError:
                             continue
 
-        # Persist completed assistant response to SQLite database
-        if conversation_id and accumulated_response:
-            full_text = "".join(accumulated_response)
+        # 4. Persist completed assistant message into SQLite
+        full_text = "".join(accumulated_response)
+        if conversation_id and full_text:
             with Session(engine) as db:
                 db.add(
                     Message(
@@ -243,14 +248,16 @@ async def stream_chat_completion(
                         content=full_text,
                     )
                 )
+                conv = db.get(Conversation, conversation_id)
+                if conv:
+                    conv.updated_at = datetime.now(UTC)
+                    db.add(conv)
                 db.commit()
 
-        yield ServerSentEvent(
-            event="message_end",
-            data=json.dumps({"finish_reason": "stop"}),
-        )
+        yield ServerSentEvent(event="message_end", data=json.dumps({"finish_reason": "stop"}))
 
     except Exception as e:
+        logger.error(f"Inference stream failed: {e}", exc_info=True)
         yield ServerSentEvent(event="error", data=json.dumps({"error": str(e)}))
     finally:
         model_supervisor.active_requests = max(0, model_supervisor.active_requests - 1)

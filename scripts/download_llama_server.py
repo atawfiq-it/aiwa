@@ -5,6 +5,7 @@ import stat
 import subprocess
 import zipfile
 import httpx
+import platform
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TARGET_DIR = REPO_ROOT / "services" / "llama-cpp"
@@ -26,9 +27,30 @@ def has_tool(name: str) -> bool:
 
 def build_llama_server():
     if not has_tool("cmake"):
-        raise RuntimeError(
-            "CMake is required. Install with: sudo apt install cmake build-essential"
+        hint = (
+            "brew install cmake"
+            if platform.system() == "Darwin"
+            else "sudo apt install cmake build-essential"
         )
+        raise RuntimeError(
+            f"CMake is required to build llama-server. Install it with: {hint}"
+        )
+
+    system = platform.system()
+    has_cuda = has_tool("nvcc")
+    cmake_flags = ["-DCMAKE_BUILD_TYPE=Release"]
+
+    if system == "Darwin":
+        print(
+            "🍎 macOS detected! Enabling Apple Metal GPU acceleration (-DGGML_METAL=ON)..."
+        )
+        cmake_flags.extend(["-DGGML_METAL=ON", "-DGGML_METAL_EMBED_LIBRARY=ON"])
+    elif has_cuda:
+        print("⚡ NVIDIA CUDA compiler (nvcc) detected! Enabling -DGGML_CUDA=ON...")
+        cmake_flags.append("-DGGML_CUDA=ON")
+    else:
+        print("ℹ️  Compiling with CPU optimizations...")
+        cmake_flags.append("-DGGML_CUDA=OFF")
 
     temp_zip = TARGET_DIR / "llama_v0.9.0_src.zip"
     print(f"⬇️  Downloading v0.9.0 source code from {SOURCE_ZIP_URL}...")

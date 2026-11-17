@@ -85,12 +85,17 @@ data/models/**/*.pt
 *.onnx
 
 # 10. Embedded External Services & Subprocesses
+services/*
 services/llama-cpp/llama-server
 services/llama-cpp/src/
 services/llama-cpp/*.zip
 services/comfyui/app/
 services/comfyui/.venv/
 services/comfyui/models/checkpoints/*
+services/diffusion-cpp/
+services/diffusion-cpp/*
+services/diffusion-cpp/sd/
+services/diffusion-cpp/src/
 
 # 11. OS & IDE Metadata
 .DS_Store

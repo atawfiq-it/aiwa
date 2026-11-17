@@ -12,29 +12,49 @@ from app.core.config import settings
 from app.database.engine import engine
 from app.database.models import GeneratedFile
 from app.supervisors.model_supervisor import model_supervisor
+from app.utils.safetensors_inspector import inspect_safetensors_type
 
 logger = logging.getLogger(__name__)
 
 STYLE_PRESETS = {
     "none": {"prompt": "{prompt}", "negative": ""},
     "cinematic": {
-        "prompt": "{prompt}, cinematic lighting, 8k resolution, photorealistic, blockbuster movie still, 35mm lens, sharp focus",
-        "negative": "cartoon, illustration, 3d render, anime, blurry, low resolution, bad anatomy",
+        "prompt": (
+            "{prompt}, cinematic lighting, 8k resolution, photorealistic, "
+            "blockbuster movie still, 35mm lens, sharp focus"
+        ),
+        "negative": (
+            "cartoon, illustration, 3d render, anime, blurry, low resolution, bad anatomy"
+        ),
     },
     "photorealistic": {
-        "prompt": "{prompt}, raw photo, ultra high resolution, highly detailed skin texture, professional portrait photography, dslr, soft natural lighting",
-        "negative": "painting, drawing, anime, cartoon, airbrushed, plastic skin, CGI, disfigured",
+        "prompt": (
+            "{prompt}, raw photo, ultra high resolution, highly detailed skin texture, "
+            "professional portrait photography, dslr, soft natural lighting"
+        ),
+        "negative": (
+            "painting, drawing, anime, cartoon, airbrushed, plastic skin, CGI, disfigured"
+        ),
     },
     "digital_art": {
-        "prompt": "{prompt}, detailed digital painting, trending on artstation, masterpiece, intricate composition, vibrant color palette, dynamic lighting",
+        "prompt": (
+            "{prompt}, detailed digital painting, trending on artstation, masterpiece, "
+            "intricate composition, vibrant color palette, dynamic lighting"
+        ),
         "negative": "blurry, low quality, artifacts, watermark, grainy, deformed",
     },
     "anime": {
-        "prompt": "{prompt}, anime aesthetic, makoto shinkai style, studio ghibli, vibrant anime key visual, clean lineart, vibrant colors",
+        "prompt": (
+            "{prompt}, anime aesthetic, makoto shinkai style, studio ghibli, "
+            "vibrant anime key visual, clean lineart, vibrant colors"
+        ),
         "negative": "photorealistic, 3d, western comic, text, signature, low quality",
     },
     "fantasy": {
-        "prompt": "{prompt}, epic fantasy illustration, ethereal atmosphere, mystical glow, magical world, volumetric lighting, hyperdetailed",
+        "prompt": (
+            "{prompt}, epic fantasy illustration, ethereal atmosphere, mystical glow, "
+            "magical world, volumetric lighting, hyperdetailed"
+        ),
         "negative": "modern, futuristic, photographic, low quality, ugly, blurry",
     },
 }
@@ -42,34 +62,52 @@ STYLE_PRESETS = {
 
 class DirectDiffusionService:
     def list_checkpoints(self) -> list[dict[str, Any]]:
-        """Deep recursive scan across all directories configured in .env for .safetensors and .ckpt."""
+        """Deep recursive scan across configured .env paths for Diffusion checkpoints only."""
         search_dirs = settings.get_diffusion_search_paths()
         discovered: list[dict[str, Any]] = []
         seen_paths = set()
 
         for base_dir in search_dirs:
+            logger.info(f"Scanning for diffusion checkpoints in: {base_dir}")
             for root, _, files in os.walk(base_dir, followlinks=True):
                 for f in files:
                     lower = f.lower()
                     if lower.endswith((".safetensors", ".ckpt")):
                         file_path = Path(root) / f
-                        resolved_str = str(file_path.resolve())
+                        if not file_path.is_file():
+                            continue
 
+                        resolved_str = str(file_path.resolve())
                         if resolved_str in seen_paths:
                             continue
 
+                        # Guard: Exclude MLX / LLM folders that contain tokenizer.json
+                        parent_dir = file_path.parent
+                        if (parent_dir / "tokenizer.json").exists() or (
+                            parent_dir / "tokenizer_config.json"
+                        ).exists():
+                            continue
+
                         size_bytes = file_path.stat().st_size
-                        if size_bytes > 500 * 1024 * 1024:
-                            seen_paths.add(resolved_str)
-                            discovered.append(
-                                {
-                                    "name": file_path.stem.replace("_", " "),
-                                    "filename": f,
-                                    "path": resolved_str,
-                                    "size_gb": round(size_bytes / (1024**3), 2),
-                                    "folder": str(Path(root).name),
-                                }
-                            )
+                        # Filter out tiny adapter/LoRA files (< 500 MB)
+                        if size_bytes <= 500 * 1024 * 1024:
+                            continue
+
+                        # Guard: Inspect binary header to verify this is a Diffusion model
+                        if lower.endswith(".safetensors"):
+                            if inspect_safetensors_type(file_path) != "diffusion":
+                                continue
+
+                        seen_paths.add(resolved_str)
+                        discovered.append(
+                            {
+                                "name": file_path.stem.replace("_", " "),
+                                "filename": f,
+                                "path": resolved_str,
+                                "size_gb": round(size_bytes / (1024**3), 2),
+                                "folder": str(Path(root).name),
+                            }
+                        )
 
         return sorted(discovered, key=lambda x: x["name"])
 
@@ -95,10 +133,17 @@ class DirectDiffusionService:
         elif sampler_name == "DDIM":
             pipeline.scheduler = DDIMScheduler.from_config(config)
         else:
-            # Default to DPM++ 2M Karras (standard for SD)
             pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
                 config, use_karras_sigmas=True
             )
+
+    def _get_compute_device(self) -> tuple[str, torch.dtype]:
+        """Determines the optimal PyTorch device across CUDA, Apple MPS, or CPU."""
+        if torch.cuda.is_available():
+            return "cuda", torch.float16
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps", torch.float16
+        return "cpu", torch.float32
 
     async def generate_image(
         self,
@@ -118,13 +163,12 @@ class DirectDiffusionService:
         if not ckpt_file.exists():
             raise FileNotFoundError(f"Checkpoint not found at: {ckpt_file}")
 
-        # Yield GPU from LLM if active
+        # Yield GPU memory from LLM if currently loaded
         if model_supervisor.process:
             logger.info("Yielding GPU from LLM to Direct Diffusion...")
             await model_supervisor.unload_model()
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        torch_dtype = torch.float16 if device == "cuda" else torch.float32
+        device, torch_dtype = self._get_compute_device()
 
         # Apply Style Preset
         preset = STYLE_PRESETS.get(style_preset.lower(), STYLE_PRESETS["none"])
@@ -133,11 +177,15 @@ class DirectDiffusionService:
 
         # Configure deterministic seed
         if seed == -1:
-            seed = torch.randint(0, 2**32 - 1, (1,)).item()
-        generator = torch.Generator(device=device).manual_seed(seed)
+            seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
+
+        # Note: MPS generator runs cleanly on CPU or MPS device depending on PyTorch build
+        gen_device = "cpu" if device == "mps" else device
+        generator = torch.Generator(device=gen_device).manual_seed(seed)
 
         logger.info(
-            f"Loading checkpoint '{ckpt_file.name}' on {device} (Sampler: {sampler}, Seed: {seed})..."
+            f"Loading checkpoint '{ckpt_file.name}' on {device.upper()} "
+            f"(Sampler: {sampler}, Seed: {seed})..."
         )
         is_sdxl = any(k in ckpt_file.name.lower() for k in ["xl", "turbo", "lightning"])
 
@@ -160,16 +208,15 @@ class DirectDiffusionService:
                     use_safetensors=True,
                 )
 
-            # Apply Sampler
             self._configure_scheduler(pipeline, sampler)
             pipeline.to(device)
 
-            # Prevent black images / numerical NaN on half-precision VAE
             if hasattr(pipeline, "vae") and hasattr(pipeline.vae, "enable_tiling"):
                 pipeline.vae.enable_tiling()
 
             logger.info(
-                f"Generating {batch_size} image(s) ({width}x{height}, {steps} steps, CFG {guidance_scale})..."
+                f"Generating {batch_size} image(s) "
+                f"({width}x{height}, {steps} steps, CFG {guidance_scale})..."
             )
             result = pipeline(
                 prompt=[final_prompt] * batch_size,
@@ -188,6 +235,12 @@ class DirectDiffusionService:
                     output_path = settings.GENERATED_DIR / filename
                     img.save(output_path)
 
+                    meta = (
+                        f'{{"checkpoint": "{ckpt_file.name}", '
+                        f'"steps": {steps}, "cfg": {guidance_scale}, '
+                        f'"seed": {seed}, "sampler": "{sampler}"}}'
+                    )
+
                     file_record = GeneratedFile(
                         file_type="image",
                         file_name=filename,
@@ -195,7 +248,7 @@ class DirectDiffusionService:
                         mime_type="image/png",
                         file_size_bytes=output_path.stat().st_size,
                         prompt=prompt,
-                        metadata_json=f'{{"checkpoint": "{ckpt_file.name}", "steps": {steps}, "cfg": {guidance_scale}, "seed": {seed}, "sampler": "{sampler}"}}',
+                        metadata_json=meta,
                     )
                     db.add(file_record)
                     db.commit()
@@ -205,7 +258,10 @@ class DirectDiffusionService:
                         {
                             "file_id": file_record.id,
                             "file_name": filename,
-                            "image_url": f"http://127.0.0.1:8000/api/v1/media/files/{file_record.id}",
+                            "image_url": (
+                                f"http://{settings.API_HOST}:{settings.API_PORT}"
+                                f"/api/v1/media/files/{file_record.id}"
+                            ),
                         }
                     )
 
@@ -222,6 +278,8 @@ class DirectDiffusionService:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            elif hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()
 
 
 direct_diffusion = DirectDiffusionService()
