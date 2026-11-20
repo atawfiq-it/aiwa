@@ -1,0 +1,12 @@
+id: mistral-7b-instruct-v0.3
+name: "Mistral Instruct v0.3 (7B)"
+description: "Reliable open-weights model for coding, logic, and native JSON tool calling."
+format: gguf
+repo_id: "bartowski/Mistral-7B-Instruct-v0.3-GGUF"
+filename: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+mmproj_filename: null
+context_length: 8192
+vision_supported: false
+min_vram_gb: 5.0
+platforms: ["linux", "windows", "darwin"]
+tags: ["Coding", "Agents", "GGUF"]

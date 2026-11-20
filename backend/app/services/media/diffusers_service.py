@@ -1,4 +1,5 @@
 import gc
+import json
 import logging
 import os
 import uuid
@@ -11,7 +12,7 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.database.engine import engine
 from app.database.models import GeneratedFile
-from app.supervisors.model_supervisor import model_supervisor
+from app.supervisors.model_supervisor import ModelState, model_supervisor
 from app.utils.safetensors_inspector import inspect_safetensors_type
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ STYLE_PRESETS = {
 
 class DirectDiffusionService:
     def list_checkpoints(self) -> list[dict[str, Any]]:
-        """Deep recursive scan across configured .env paths for Diffusion checkpoints only."""
+        """Recursively scans .env diffusion directories, strictly excluding LLM/MLX weights."""
         search_dirs = settings.get_diffusion_search_paths()
         discovered: list[dict[str, Any]] = []
         seen_paths = set()
@@ -72,32 +73,32 @@ class DirectDiffusionService:
             for root, _, files in os.walk(base_dir, followlinks=True):
                 for f in files:
                     lower = f.lower()
-                    if lower.endswith((".safetensors", ".ckpt")):
-                        file_path = Path(root) / f
-                        if not file_path.is_file():
+                    if not lower.endswith((".safetensors", ".ckpt")):
+                        continue
+
+                    file_path = Path(root) / f
+                    if not file_path.is_file():
+                        continue
+
+                    # Guard 1: Exclude HuggingFace/MLX LLM directories
+                    parent_dir = file_path.parent
+                    if (parent_dir / "tokenizer.json").exists() or (
+                        parent_dir / "tokenizer_config.json"
+                    ).exists():
+                        continue
+
+                    # Guard 2: Verify binary tensor header is Diffusion
+                    if lower.endswith(".safetensors"):
+                        if inspect_safetensors_type(file_path) != "diffusion":
                             continue
 
-                        resolved_str = str(file_path.resolve())
-                        if resolved_str in seen_paths:
-                            continue
+                    resolved_str = str(file_path.resolve())
+                    if resolved_str in seen_paths:
+                        continue
 
-                        # Guard: Exclude MLX / LLM folders that contain tokenizer.json
-                        parent_dir = file_path.parent
-                        if (parent_dir / "tokenizer.json").exists() or (
-                            parent_dir / "tokenizer_config.json"
-                        ).exists():
-                            continue
-
-                        size_bytes = file_path.stat().st_size
-                        # Filter out tiny adapter/LoRA files (< 500 MB)
-                        if size_bytes <= 500 * 1024 * 1024:
-                            continue
-
-                        # Guard: Inspect binary header to verify this is a Diffusion model
-                        if lower.endswith(".safetensors"):
-                            if inspect_safetensors_type(file_path) != "diffusion":
-                                continue
-
+                    size_bytes = file_path.stat().st_size
+                    # Ignore tiny LoRA/adapter weights (< 500 MB)
+                    if size_bytes > 500 * 1024 * 1024:
                         seen_paths.add(resolved_str)
                         discovered.append(
                             {
@@ -112,7 +113,7 @@ class DirectDiffusionService:
         return sorted(discovered, key=lambda x: x["name"])
 
     def _configure_scheduler(self, pipeline: Any, sampler_name: str) -> None:
-        """Configures the user-selected high-quality scheduler."""
+        """Configures the selected denoising scheduler."""
         from diffusers import (
             DDIMScheduler,
             DPMSolverMultistepScheduler,
@@ -137,12 +138,21 @@ class DirectDiffusionService:
                 config, use_karras_sigmas=True
             )
 
-    def _get_compute_device(self) -> tuple[str, torch.dtype]:
-        """Determines the optimal PyTorch device across CUDA, Apple MPS, or CPU."""
-        if torch.cuda.is_available():
-            return "cuda", torch.float16
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps", torch.float16
+    def _select_device_and_dtype(self) -> tuple[str, torch.dtype]:
+        """Selects optimal accelerator (CUDA, Apple Silicon MPS, or CPU)."""
+        accel_pref = settings.AIWA_HARDWARE_ACCELERATION.lower().strip()
+
+        if accel_pref != "cpu":
+            if accel_pref in ("auto", "cuda") and torch.cuda.is_available():
+                return "cuda", torch.float16
+            if (
+                accel_pref in ("auto", "metal", "mps")
+                and hasattr(torch.backends, "mps")
+                and torch.backends.mps.is_available()
+            ):
+                # float32 prevents black/NaN VAE overflow on Apple MPS
+                return "mps", torch.float32
+
         return "cpu", torch.float32
 
     async def generate_image(
@@ -159,29 +169,33 @@ class DirectDiffusionService:
         batch_size: int = 1,
         style_preset: str = "none",
     ) -> dict[str, Any]:
+
+        if model_supervisor.process or model_supervisor.state != ModelState.UNLOADED:
+            logger.info(
+                "🔄 Process Change (LLM -> Diffusion): Unloading LLM and keeping it unloaded."
+            )
+            await model_supervisor.unload_model()
+
         ckpt_file = Path(checkpoint_path).resolve()
         if not ckpt_file.exists():
             raise FileNotFoundError(f"Checkpoint not found at: {ckpt_file}")
 
-        # Yield GPU memory from LLM if currently loaded
+        # 1. Yield GPU/Unified Memory from LLM if active
         if model_supervisor.process:
-            logger.info("Yielding GPU from LLM to Direct Diffusion...")
+            logger.info("Yielding accelerator memory from LLM to Direct Diffusion...")
             await model_supervisor.unload_model()
 
-        device, torch_dtype = self._get_compute_device()
+        device, torch_dtype = self._select_device_and_dtype()
 
-        # Apply Style Preset
+        # 2. Apply Style Preset
         preset = STYLE_PRESETS.get(style_preset.lower(), STYLE_PRESETS["none"])
         final_prompt = preset["prompt"].format(prompt=prompt)
         combined_negative = f"{negative_prompt}, {preset['negative']}".strip(", ")
 
-        # Configure deterministic seed
+        # 3. Configure deterministic seed (CPU generator works identically on CUDA, MPS, & CPU)
         if seed == -1:
             seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
-
-        # Note: MPS generator runs cleanly on CPU or MPS device depending on PyTorch build
-        gen_device = "cpu" if device == "mps" else device
-        generator = torch.Generator(device=gen_device).manual_seed(seed)
+        generator = torch.Generator(device="cpu").manual_seed(seed)
 
         logger.info(
             f"Loading checkpoint '{ckpt_file.name}' on {device.upper()} "
@@ -229,17 +243,22 @@ class DirectDiffusionService:
             )
 
             generated_artifacts = []
+            base_url = f"http://{settings.API_HOST}:{settings.API_PORT}/api/v1/media/files"
+
             with Session(engine) as db:
                 for img in result.images:
                     filename = f"art_{uuid.uuid4().hex[:8]}.png"
                     output_path = settings.GENERATED_DIR / filename
                     img.save(output_path)
 
-                    meta = (
-                        f'{{"checkpoint": "{ckpt_file.name}", '
-                        f'"steps": {steps}, "cfg": {guidance_scale}, '
-                        f'"seed": {seed}, "sampler": "{sampler}"}}'
-                    )
+                    meta = {
+                        "checkpoint": ckpt_file.name,
+                        "steps": steps,
+                        "cfg": guidance_scale,
+                        "seed": seed,
+                        "sampler": sampler,
+                        "device": device,
+                    }
 
                     file_record = GeneratedFile(
                         file_type="image",
@@ -248,7 +267,7 @@ class DirectDiffusionService:
                         mime_type="image/png",
                         file_size_bytes=output_path.stat().st_size,
                         prompt=prompt,
-                        metadata_json=meta,
+                        metadata_json=json.dumps(meta),
                     )
                     db.add(file_record)
                     db.commit()
@@ -258,19 +277,18 @@ class DirectDiffusionService:
                         {
                             "file_id": file_record.id,
                             "file_name": filename,
-                            "image_url": (
-                                f"http://{settings.API_HOST}:{settings.API_PORT}"
-                                f"/api/v1/media/files/{file_record.id}"
-                            ),
+                            "image_url": f"{base_url}/{file_record.id}",
                         }
                     )
 
+            logger.info(f"✅ Generated {len(generated_artifacts)} image(s) successfully.")
             return {
                 "artifacts": generated_artifacts,
                 "seed": seed,
                 "steps": steps,
                 "sampler": sampler,
                 "cfg": guidance_scale,
+                "device": device,
             }
 
         finally:

@@ -25,6 +25,49 @@
     document.documentElement.setAttribute('data-theme', $currentTheme);
   }
 
+  async function waitForBackendAndHydrate() {
+    // Poll /health up to 30 times (15 seconds) while backend sidecar boots up
+    let backendReady = false;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try {
+        const health = await fetch('http://127.0.0.1:8000/api/v1/health');
+        if (health.ok) {
+          backendReady = true;
+          break;
+        }
+      } catch {}
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    if (!backendReady) {
+      console.error('[AIWA] Timed out waiting for backend daemon.');
+      return;
+    }
+
+    await ensureToken();
+    const [convRes, modelRes, charRes, statusRes] = await Promise.all([
+      apiFetch('/conversations'),
+      apiFetch('/models'),
+      apiFetch('/characters'),
+      apiFetch('/models/status'),
+    ]);
+
+    if (convRes.ok) $conversations = await convRes.json();
+    if (modelRes.ok) $registeredModels = await modelRes.json();
+    if (charRes.ok) {
+      const charData = await charRes.json();
+      $characters = charData;
+      if (charData.length > 0 && !$activeCharacterId) {
+        activeCharacterId.set(charData[0].id);
+      }
+    }
+    if (statusRes.ok) {
+      const status = await statusRes.json();
+      $supervisorStatus = status;
+      $activeModelId = status.active_model_id || '';
+    }
+  }
+
   onMount(async () => {
     await ensureToken();
     const [convRes, modelRes, charRes, statusRes] = await Promise.all([
@@ -37,14 +80,20 @@
     if (convRes.ok) $conversations = await convRes.json();
     if (modelRes.ok) $registeredModels = await modelRes.json();
     if (charRes.ok) {
-      $characters = await charRes.json();
-      if ($characters.length > 0 && !$activeCharacterId) $activeCharacterId = $characters[0].id;
+      const charData = await charRes.json();
+      $characters = charData;
+      if (charData.length > 0 && !$activeCharacterId) {
+        activeCharacterId.set(charData[0].id);
+      }
     }
     if (statusRes.ok) {
       const status = await statusRes.json();
       $supervisorStatus = status;
       $activeModelId = status.active_model_id || '';
     }
+  
+  onMount(() => {
+    waitForBackendAndHydrate();
   });
 </script>
 

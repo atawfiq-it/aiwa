@@ -29,6 +29,10 @@
     selectedDropdownModelId = $activeModelId;
   }
 
+  // Automatically refresh saved runs when an agent finishes executing
+  $: if (!isRunning) {
+    loadSavedRuns();
+  }
 
   async function loadSavedRuns() {
     try {
@@ -99,10 +103,22 @@
       <p class="text-[11px] text-[var(--text-muted)]">Visual DAG reasoning, sandbox breakpoints & task records.</p>
     </div>
 
-    <!-- Model Selector -->
+    <!-- Model Selector with Live Status Pill -->
     <div>
       <div class="flex items-center justify-between mb-1">
-        <label for="agent-model-select" class="text-xs font-semibold text-[var(--text-muted)]">Active Model:</label>
+        <div class="flex items-center gap-2">
+          <label for="agent-model-select" class="text-xs font-semibold text-[var(--text-muted)]">Active Model:</label>
+          {#if $supervisorStatus}
+            <span class={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase ${
+              $supervisorStatus.state === 'Ready'
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                : 'bg-slate-500/10 text-slate-400 border border-slate-500/30'
+            }`}>
+              {$supervisorStatus.state === 'Ready' ? 'Ready' : 'Standby'}
+            </span>
+          {/if}
+        </div>
+
         {#if selectedDropdownModelId && selectedDropdownModelId !== $activeModelId}
           <button
             type="button"
@@ -120,11 +136,15 @@
         bind:value={selectedDropdownModelId}
         class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs text-[var(--text-main)] font-semibold focus:outline-none"
       >
-        {#each $registeredModels as m}
-          <option value={m.id}>
-            {m.display_name} {m.vision_supported ? '👁️' : ''} {m.id === $activeModelId ? '(Active)' : ''}
-          </option>
-        {/each}
+        {#if $registeredModels.length === 0}
+          <option value="">No models registered</option>
+        {:else}
+          {#each $registeredModels as m}
+            <option value={m.id}>
+              {m.display_name} {m.vision_supported ? '👁️' : ''} {m.id === $activeModelId ? '(Active)' : ''}
+            </option>
+          {/each}
+        {/if}
       </select>
     </div>
 
@@ -156,11 +176,11 @@
         rows="4"
         bind:value={promptText}
         placeholder="Describe task or paste Python code to audit..."
-        class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-3 text-xs font-mono text-[var(--text-main)] focus:outline-none"
+        class="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl p-3 text-xs font-mono text-[var(--text-main)] focus:outline-none focus:border-[var(--accent)]"
       ></textarea>
     </div>
 
-    <!-- Conditional Sandbox Files (Only renders if files exist) -->
+    <!-- Conditional Sandbox Files (Hidden unless files exist) -->
     <SandboxFileExplorer activeRunId={currentRunId} />
 
     <!-- Saved Task Records List -->
@@ -202,11 +222,11 @@
   <button
     type="button"
     on:click={onLaunch}
-    disabled={isRunning || !promptText.trim() || $supervisorStatus?.state !== 'Ready'}
+    disabled={isRunning || !promptText.trim() || $registeredModels.length === 0}
     class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-xs font-bold text-white rounded-xl shadow-md transition flex items-center justify-center gap-2"
   >
-    {#if $supervisorStatus?.state !== 'Ready'}
-      ⚠️ Load Model in Header First
+    {#if $registeredModels.length === 0}
+      ⚠️ No Models Registered
     {:else if isRunning}
       <span class="animate-spin">🌀</span> Agent Reasoning...
     {:else}

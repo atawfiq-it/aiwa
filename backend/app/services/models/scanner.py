@@ -18,14 +18,16 @@ class ModelScannerService:
     @staticmethod
     def _is_vision_model(filename: str) -> bool:
         lower = filename.lower()
-        vision_keys = ["-vl", "vision", "llava", "qwen-vl", "qwen2-vl", "qwen2.5-vl"]
-        return any(k in lower for k in vision_keys)
+        return any(
+            k in lower
+            for k in ["-vl", "vision", "llava", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl"]
+        )
 
     def scan_directories(self, search_paths: list[str]) -> list[dict[str, Any]]:
-        """Deep recursive scan across all subdirectories for GGUF, MLX, Diffusion, and Voice models."""
+        """Deep recursive scan across all sub-directory levels for GGUF, MLX, Diffusion, and Voice models."""
         discovered_models: list[dict[str, Any]] = []
         mmproj_files: dict[str, Path] = {}
-        seen_paths: set[str] = set()
+        seen_paths = set()
 
         valid_dirs: list[Path] = []
         for p in search_paths:
@@ -33,51 +35,50 @@ class ModelScannerService:
             if path_obj.exists() and path_obj.is_dir():
                 valid_dirs.append(path_obj)
             else:
-                logger.warning(f"Scan path does not exist or is not a directory: {p}")
+                logger.warning(f"Scan path does not exist: {p}")
 
-        # Pass 1: Recursive indexing of multimodal projectors across all depths
+        # Pass 1: Recursive indexing of multimodal projectors (.gguf)
         for root_dir in valid_dirs:
             for root, _, files in os.walk(root_dir, followlinks=True):
                 for f in files:
-                    file_path = Path(root) / f
-                    if (
-                        file_path.is_file()
-                        and f.lower().endswith(".gguf")
-                        and "mmproj" in f.lower()
-                    ):
-                        mmproj_files[file_path.stem] = file_path
+                    if f.lower().endswith(".gguf") and "mmproj" in f.lower():
+                        proj_path = Path(root) / f
+                        if proj_path.is_file():
+                            mmproj_files[proj_path.stem] = proj_path
 
-        # Pass 2: Recursive indexing of GGUF, MLX, Diffusion, and Voice models
+        # Pass 2: Recursive indexing of MLX bundles, GGUFs, Diffusion checkpoints, and Voice models
         for root_dir in valid_dirs:
             for root, _, files in os.walk(root_dir, followlinks=True):
                 root_path = Path(root)
 
-                # 1. Detect Apple MLX / Safetensors LLM directory bundle
+                # 1. Detect Apple MLX / Transformer LLM Folder Bundle
+                # A directory with config.json + tokenizer + *.safetensors is ALWAYS an LLM/VLM, never Diffusion
                 has_config = "config.json" in files
                 has_tokenizer = "tokenizer.json" in files or "tokenizer_config.json" in files
-                safetensor_files = [f for f in files if f.lower().endswith(".safetensors")]
+                safetensor_shards = [f for f in files if f.lower().endswith(".safetensors")]
+                is_mlx_folder = has_config and has_tokenizer and len(safetensor_shards) > 0
 
-                if has_config and has_tokenizer and safetensor_files:
-                    first_shard = root_path / safetensor_files[0]
-                    if first_shard.is_file() and inspect_safetensors_type(first_shard) == "llm":
+                if is_mlx_folder:
+                    resolved_dir = str(root_path.resolve())
+                    if resolved_dir not in seen_paths:
                         total_bytes = sum(
                             (root_path / s).stat().st_size
-                            for s in safetensor_files
+                            for s in safetensor_shards
                             if (root_path / s).is_file()
                         )
                         if total_bytes > 50 * 1024 * 1024:
-                            # Detect vision support via preprocessor_config.json or folder name
+                            seen_paths.add(resolved_dir)
                             is_vision = (
                                 "preprocessor_config.json" in files
                                 or "video_preprocessor_config.json" in files
-                                or any(k in root_path.name.lower() for k in ["vl", "vision"])
+                                or self._is_vision_model(root_path.name)
                             )
                             discovered_models.append(
                                 {
                                     "category": "llm",
                                     "format": "mlx",
-                                    "display_name": f"{root_path.name}",
-                                    "file_path": str(root_path.resolve()),
+                                    "display_name": root_path.name,
+                                    "file_path": resolved_dir,
                                     "file_size_gb": round(total_bytes / (1024**3), 2),
                                     "file_size_bytes": total_bytes,
                                     "quantization": "MLX-4bit"
@@ -89,7 +90,7 @@ class ModelScannerService:
                                 }
                             )
 
-                # 2. Scan individual files inside the current directory
+                # 2. Scan individual files inside this folder (allows co-located .gguf or .safetensors)
                 for f in files:
                     file_path = root_path / f
                     fname_lower = f.lower()
@@ -97,11 +98,11 @@ class ModelScannerService:
                     if not file_path.is_file() or file_path.is_dir():
                         continue
 
-                    resolved_str = str(file_path.resolve())
-                    if resolved_str in seen_paths:
+                    resolved_file = str(file_path.resolve())
+                    if resolved_file in seen_paths:
                         continue
 
-                    # A. LLM & Vision Models (.gguf)
+                    # A. GGUF Language / Vision Models
                     if fname_lower.endswith(".gguf"):
                         if "mmproj" in fname_lower:
                             continue
@@ -110,29 +111,26 @@ class ModelScannerService:
                         if size_bytes < 50 * 1024 * 1024:
                             continue
 
-                        seen_paths.add(resolved_str)
                         is_vision = self._is_vision_model(f)
                         matched_mmproj = None
                         if is_vision:
                             for proj_name, proj_p in mmproj_files.items():
                                 if "qwen" in fname_lower and "qwen" in proj_name.lower():
-                                    matched_mmproj = str(proj_p.resolve())
+                                    matched_mmproj = str(proj_p)
                                     break
-                                if proj_p.parent == file_path.parent:
-                                    matched_mmproj = str(proj_p.resolve())
+                                elif proj_p.parent == file_path.parent:
+                                    matched_mmproj = str(proj_p)
                                     break
 
-                        clean_name = (
-                            file_path.stem.replace("-Q4_K_M", "")
-                            .replace(".Q4_K_M", "")
-                            .replace("_", " ")
-                        )
+                        seen_paths.add(resolved_file)
                         discovered_models.append(
                             {
                                 "category": "llm",
                                 "format": "gguf",
-                                "display_name": clean_name,
-                                "file_path": resolved_str,
+                                "display_name": file_path.stem.replace("-Q4_K_M", "").replace(
+                                    "_", " "
+                                ),
+                                "file_path": resolved_file,
                                 "file_size_gb": round(size_bytes / (1024**3), 2),
                                 "file_size_bytes": size_bytes,
                                 "quantization": self._detect_quantization(f),
@@ -142,8 +140,12 @@ class ModelScannerService:
                             }
                         )
 
-                    # B. Diffusion / Image Generation Models (.safetensors, .ckpt)
+                    # B. Image Diffusion Checkpoints (.safetensors, .ckpt)
                     elif fname_lower.endswith((".safetensors", ".ckpt")):
+                        # Never classify shards inside an MLX/LLM folder as Diffusion
+                        if is_mlx_folder:
+                            continue
+
                         size_bytes = file_path.stat().st_size
                         if size_bytes < 500 * 1024 * 1024:
                             continue
@@ -152,13 +154,13 @@ class ModelScannerService:
                             if inspect_safetensors_type(file_path) != "diffusion":
                                 continue
 
-                        seen_paths.add(resolved_str)
+                        seen_paths.add(resolved_file)
                         discovered_models.append(
                             {
                                 "category": "diffusion",
                                 "format": "safetensors",
                                 "display_name": file_path.stem.replace("_", " "),
-                                "file_path": resolved_str,
+                                "file_path": resolved_file,
                                 "file_size_gb": round(size_bytes / (1024**3), 2),
                                 "file_size_bytes": size_bytes,
                                 "quantization": "fp16" if "fp16" in fname_lower else "fp32",
@@ -168,18 +170,18 @@ class ModelScannerService:
                             }
                         )
 
-                    # C. Voice / Speech Models (.onnx, Whisper / Kokoro weights)
+                    # C. Voice / Speech Models (.onnx, .bin)
                     elif fname_lower.endswith((".onnx", ".bin")) and any(
                         k in fname_lower for k in ["whisper", "kokoro", "tts", "stt", "voice"]
                     ):
                         size_bytes = file_path.stat().st_size
-                        seen_paths.add(resolved_str)
+                        seen_paths.add(resolved_file)
                         discovered_models.append(
                             {
                                 "category": "voice",
                                 "format": "onnx",
                                 "display_name": file_path.stem.replace("_", " "),
-                                "file_path": resolved_str,
+                                "file_path": resolved_file,
                                 "file_size_gb": round(size_bytes / (1024**3), 2),
                                 "file_size_bytes": size_bytes,
                                 "quantization": "int8" if "int8" in fname_lower else "fp32",
