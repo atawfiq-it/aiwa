@@ -1,10 +1,18 @@
+import platform
 import re
+import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Root directory of the repository
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
+if getattr(sys, "frozen", False):
+    # When running as a packaged desktop app, use writable ~/.aiwa directory
+    ROOT_DIR = Path.home() / ".aiwa"
+    ROOT_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    # Development repository root
+    ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -14,13 +22,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    ENVIRONMENT: str = "development"  # "development" | "production"
-
-    # API Configuration
+    # Environment & API Configuration
+    ENVIRONMENT: str = "development"
     PROJECT_NAME: str = "Local Multimodal AI Workstation"
     VERSION: str = "0.1.0"
     API_V1_PREFIX: str = "/api/v1"
-
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 8000
 
@@ -37,24 +43,29 @@ class Settings(BaseSettings):
     AUTH_ENABLED: bool = True
     TOKEN_FILE_PATH: Path = ROOT_DIR / "data" / ".aiwa_session_token"
 
+    # Hardware & VRAM Arbiter
+    AIWA_HARDWARE_ACCELERATION: str = "auto"
+    MAX_GPU_USAGE_PERCENT: float = 80.0
+    DEFAULT_STATIC_VRAM_GB: float = 8.0
+    VRAM_SAFETY_MARGIN_MB: int = 1024
+
+    # Model Discovery & Defaults
+    DIFFUSION_MODEL_DIRECTORIES: str = ""
+    LLM_MODEL_DIRECTORIES: str = ""
+    DEFAULT_LLM_MODEL: str = "Qwen2.5-VL-7B-Instruct"
+    DEFAULT_DIFFUSION_MODEL: str = "sd_xl_turbo"
+
     # LLM / llama.cpp defaults
-    LLAMA_CPP_BASE_URL: str = "http://127.0.0.1:8080"
-    MODEL_IDLE_TTL_SECONDS: int = 600  # 10 minutes default
-    LLAMA_SERVER_BIN: str = "llama-server"  # system binary or path to llama-server
+    LLAMA_SERVER_BIN: str = ""
     LLAMA_SERVER_HOST: str = "127.0.0.1"
     LLAMA_SERVER_PORT: int = 8080
     LLAMA_PARALLEL_SLOTS: int = 1
-    DEFAULT_STATIC_VRAM_GB: float = 8.0  # Fallback VRAM budget when pynvml is unavailable
-    VRAM_SAFETY_MARGIN_MB: int = 1024  # Keep 1GB safety cushion
-    COMFYUI_BASE_URL: str = "http://127.0.0.1:8188"
-    TASK_WORKER_POLL_INTERVAL_SECONDS: float = 1.0
-    MAX_GPU_USAGE_PERCENT: float = 90.0  # Max 90% of VRAM allowed for model allocation
-    LLAMA_SERVER_BIN: str = ""
-    DIFFUSION_MODEL_DIRECTORIES: str = ""  # Comma or colon-separated paths in .env
+    MODEL_IDLE_TTL_SECONDS: int = 600
 
-    @property
-    def is_production(self) -> bool:
-        return self.ENVIRONMENT.lower() == "production"
+    # External Services & Tasks
+    COMFYUI_PORT: int = 8188
+    COMFYUI_BASE_URL: str = ""
+    TASK_WORKER_POLL_INTERVAL_SECONDS: float = 1.0
 
     @property
     def HOST(self) -> str:
@@ -64,31 +75,38 @@ class Settings(BaseSettings):
     def PORT(self) -> int:
         return self.API_PORT
 
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
     def model_post_init(self, __context) -> None:
-        # Existing directory creations...
         self.DATABASE_DIR.mkdir(parents=True, exist_ok=True)
         self.MODELS_DIR.mkdir(parents=True, exist_ok=True)
         self.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
         self.GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Auto-detect local prebuilt binary if LLAMA_SERVER_BIN is unset
-        if not self.LLAMA_SERVER_BIN:
-            local_bin = self.BASE_DIR / "services" / "llama-cpp" / "llama-server"
-            if local_bin.exists():
-                object.__setattr__(self, "LLAMA_SERVER_BIN", str(local_bin.resolve()))
-            else:
-                object.__setattr__(self, "LLAMA_SERVER_BIN", "llama-server")
+        if not self.COMFYUI_BASE_URL:
+            object.__setattr__(
+                self, "COMFYUI_BASE_URL", f"http://{self.API_HOST}:{self.COMFYUI_PORT}"
+            )
 
         if not self.DATABASE_URL:
             db_path = self.DATABASE_DIR / "aiwa.db"
             object.__setattr__(self, "DATABASE_URL", f"sqlite:///{db_path}")
 
+        if not self.LLAMA_SERVER_BIN:
+            bin_name = "llama-server.exe" if platform.system() == "Windows" else "llama-server"
+            local_bin = self.BASE_DIR / "services" / "llama-cpp" / bin_name
+            if local_bin.exists():
+                object.__setattr__(self, "LLAMA_SERVER_BIN", str(local_bin.resolve()))
+            else:
+                object.__setattr__(self, "LLAMA_SERVER_BIN", bin_name)
+
     def get_diffusion_search_paths(self) -> list[Path]:
-        """Strictly scans DIFFUSION_MODEL_DIRECTORIES from .env. Falls back to data/models only if unset."""
+        """Strictly scans DIFFUSION_MODEL_DIRECTORIES from .env. Falls back to data/models if unset."""
         paths: list[Path] = []
 
         if self.DIFFUSION_MODEL_DIRECTORIES:
-            # Split on commas, semicolons, or newlines (preserving Windows C:\ colons)
             raw_entries = re.split(r"[,;\n]", self.DIFFUSION_MODEL_DIRECTORIES)
             for entry in raw_entries:
                 cleaned = entry.strip().strip("'\"")
@@ -99,6 +117,21 @@ class Settings(BaseSettings):
 
         if not paths:
             paths.append(self.MODELS_DIR.resolve())
+
+        return paths
+
+    def get_llm_search_paths(self) -> list[Path]:
+        """Parses multiple LLM directories from .env and includes data/models."""
+        paths: list[Path] = [self.MODELS_DIR.resolve()]
+
+        if self.LLM_MODEL_DIRECTORIES:
+            raw_entries = re.split(r"[,;\n]", self.LLM_MODEL_DIRECTORIES)
+            for entry in raw_entries:
+                cleaned = entry.strip().strip("'\"")
+                if cleaned:
+                    p = Path(cleaned).resolve()
+                    if p.exists() and p.is_dir() and p not in paths:
+                        paths.append(p)
 
         return paths
 

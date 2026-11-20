@@ -93,7 +93,7 @@ test:
 
 # Start the FastAPI backend daemon with live reloading
 dev:
-    uv run --project backend uvicorn app.main:app --reload --reload-dir backend/app --app-dir backend --host 127.0.0.1 --port 8000
+    cd backend && uv run python -m app.main
 
 # Start the Svelte desktop UI in local browser dev mode (http://localhost:5173)
 ui-dev:
@@ -114,14 +114,6 @@ migrate-up:
 # ------------------------------------------------------------------------------
 # 5. Local Model Operations & Vision Setup
 # ------------------------------------------------------------------------------
-
-# Register a local GGUF model and multimodal projector into the workstation
-# register-model model mmproj="" name="Qwen3-VL-8B" ctx="4096":
-#     python3 scripts/register_local_model.py \
-#         --model "{{model}}" \
-#         --mmproj "{{mmproj}}" \
-#         --name "{{name}}" \
-#         --ctx "{{ctx}}"
 
 # ------------------------------------------------------------------------------
 # 6. Production Packaging & Native Sidecar Build
@@ -148,14 +140,14 @@ build-desktop: build-backend-sidecar
 
 # Download and compile llama-server (CUDA on Linux, Metal on macOS)
 install-llama:
-    uv run --project backend python scripts/download_llama_server.py
+    python3 scripts/download_llama_server.py
 
 # Build pure C++ stable-diffusion.cpp binary
 install-sd-cpp:
     uv run --project backend python scripts/setup_sd_cpp.py
 
 # Register local GGUF model with vision projector
-register-model model mmproj="" name="Qwen3-VL-8B":
+register-model model mmproj="" name="Qwen3-VL-4B":
     uv run --project backend python scripts/register_local_model.py --model "{{model}}" --mmproj "{{mmproj}}" --name "{{name}}"
 
 # Package Python folder-based sidecar runtime
@@ -171,8 +163,8 @@ install-comfyui checkpoints="":
     python3 scripts/setup_comfyui.py --checkpoints "{{checkpoints}}"
 
 # Package Python folder-based sidecar runtime
-# package-sidecar:
-#    python3 scripts/package_sidecar.py
+package-sidecar:
+    python3 scripts/package_sidecar.py
 
 # Build native Linux standalone installers (.AppImage & .deb)
 package-desktop:
@@ -212,3 +204,20 @@ db-reset:
     rm -f data/database/aiwa.db data/database/aiwa.db-wal data/database/aiwa.db-shm
     just migrate-up
     uv run --project backend python -c "from app.database.seed_characters import seed_characters_if_empty; from app.database.seed_agents import seed_scenario_agents_if_empty; seed_characters_if_empty(); seed_scenario_agents_if_empty(); print('✅ Database wiped clean. Fresh starter personas and agents seeded.')"
+
+# Package Windows NSIS (.exe) and MSI installers (Run on Windows PowerShell)
+ ? 
+ >>>>>>>>>>>>># Package Windows NSIS (.exe) and MSI installers (Run on Windows PowerShell)
+
+		
+
+	
+
+package-windows:
+
+		
+
+	
+
+    powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1;'ppppo[ package-windows:
+    powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1

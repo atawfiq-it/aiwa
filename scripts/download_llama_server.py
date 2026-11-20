@@ -27,30 +27,9 @@ def has_tool(name: str) -> bool:
 
 def build_llama_server():
     if not has_tool("cmake"):
-        hint = (
-            "brew install cmake"
-            if platform.system() == "Darwin"
-            else "sudo apt install cmake build-essential"
-        )
         raise RuntimeError(
-            f"CMake is required to build llama-server. Install it with: {hint}"
+            "CMake is required. Install with: sudo apt install cmake build-essential"
         )
-
-    system = platform.system()
-    has_cuda = has_tool("nvcc")
-    cmake_flags = ["-DCMAKE_BUILD_TYPE=Release"]
-
-    if system == "Darwin":
-        print(
-            "🍎 macOS detected! Enabling Apple Metal GPU acceleration (-DGGML_METAL=ON)..."
-        )
-        cmake_flags.extend(["-DGGML_METAL=ON", "-DGGML_METAL_EMBED_LIBRARY=ON"])
-    elif has_cuda:
-        print("⚡ NVIDIA CUDA compiler (nvcc) detected! Enabling -DGGML_CUDA=ON...")
-        cmake_flags.append("-DGGML_CUDA=ON")
-    else:
-        print("ℹ️  Compiling with CPU optimizations...")
-        cmake_flags.append("-DGGML_CUDA=OFF")
 
     temp_zip = TARGET_DIR / "llama_v0.9.0_src.zip"
     print(f"⬇️  Downloading v0.9.0 source code from {SOURCE_ZIP_URL}...")
@@ -78,28 +57,31 @@ def build_llama_server():
     extracted_root = subfolders[0] if subfolders else SRC_DIR
     build_dir = extracted_root / "build"
 
-    has_cuda = has_tool("nvcc")
+    system = platform.system()
+    machine = platform.machine()
+    env_accel = os.environ.get("AIWA_HARDWARE_ACCELERATION", "auto").lower()
+
     cmake_flags = ["-DCMAKE_BUILD_TYPE=Release"]
 
-    if has_cuda:
-        print("⚡ CUDA Compiler (nvcc) detected! Enabling -DGGML_CUDA=ON...")
-        cmake_flags.append("-DGGML_CUDA=ON")
-    else:
-        print("⚠️ nvcc not found in PATH. Searching common CUDA paths...")
-        # Check if nvcc binary exists directly
-        for cp in CUDA_PATHS:
-            nvcc_bin = Path(cp) / "nvcc"
-            if nvcc_bin.exists():
-                print(
-                    f"⚡ Found CUDA compiler at {nvcc_bin}! Enabling -DGGML_CUDA=ON..."
-                )
-                cmake_flags.append("-DGGML_CUDA=ON")
-                has_cuda = True
-                break
+    if env_accel == "metal" or (env_accel == "auto" and system == "Darwin" and machine == "arm64"):
+        print("🍎 Enabling Apple Metal GPU acceleration (-DGGML_METAL=ON)...")
+        cmake_flags.extend(["-DGGML_METAL=ON", "-DGGML_METAL_EMBED_LIBRARY=ON"])
 
-    if not has_cuda:
-        print("ℹ️ Compiling CPU version...")
-        cmake_flags.append("-DGGML_CUDA=OFF")
+    elif env_accel == "cuda" or (env_accel == "auto" and has_tool("nvcc")):
+        print("⚡ Enabling NVIDIA CUDA acceleration (-DGGML_CUDA=ON)...")
+        cmake_flags.append("-DGGML_CUDA=ON")
+
+    elif env_accel == "rocm" or (env_accel == "auto" and (os.path.exists("/dev/kfd") or has_tool("hipcc"))):
+        print("🔴 Enabling AMD ROCm/HIP acceleration (-DGGML_HIP=ON)...")
+        cmake_flags.append("-DGGML_HIP=ON")
+
+    elif env_accel == "vulkan" or (env_accel == "auto" and has_tool("vulkaninfo")):
+        print("🌋 Enabling Cross-Vendor Vulkan acceleration (-DGGML_VULKAN=ON)...")
+        cmake_flags.append("-DGGML_VULKAN=ON")
+
+    else:
+        print("💻 Configuring Universal CPU SIMD build (-DGGML_NATIVE=ON)...")
+        cmake_flags.append("-DGGML_NATIVE=ON")
 
     print("⚙️  Configuring CMake...")
     subprocess.run(

@@ -1,3 +1,4 @@
+```markdown
 <div align="center">
 
 # 🌿 AI Workspace App (AIWA)
@@ -5,16 +6,17 @@
 
 **Say *"Yes"* to 100% private, sovereign, multimodal AI on consumer workstation hardware.**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat)](LICENSE)
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Tauri v2](https://img.shields.io/badge/Desktop-Tauri_v2-24C8DB?style=flat&logo=tauri&logoColor=white)](https://tauri.app/)
 [![Svelte](https://img.shields.io/badge/Frontend-Svelte-FF3E00?style=flat&logo=svelte&logoColor=white)](https://svelte.dev/)
 [![LLM Runtimes](https://img.shields.io/badge/LLM-llama.cpp_%7C_Apple_MLX-yellow?style=flat)](https://github.com/ggml-org/llama.cpp)
-[![Hardware](https://img.shields.io/badge/Accelerators-CUDA_%7C_Metal_%7C_ROCm_%7C_CPU-success?style=flat)](#-universal-hardware--openai-compatibility)
+[![Hardware](https://img.shields.io/badge/Accelerators-CUDA_%7C_Metal_%7C_ROCm_%7C_Vulkan_%7C_CPU-success?style=flat)](#-universal-hardware--openai-compatibility)
 [![Package Manager](https://img.shields.io/badge/Packaging-uv-blueviolet?style=flat)](https://github.com/astral-sh/uv)
-[![Linux Packaging](https://img.shields.io/badge/Bundle-AppImage_%7C_Debian-blue?style=flat&logo=linux)](#-building-native-desktop-installers-appimage--deb)
+[![Installers](https://img.shields.io/badge/Bundles-AppImage_%7C_deb_%7C_dmg_%7C_exe_%7C_msi-blue?style=flat)](#-building-native-desktop-installers-linux-macos--windows)
 
-[Screenshots](#-application-screenshots) • [Features](#-key-features) • [The Story of "Aiwa"](#-what-does-aiwa-mean) • [Recommended Models](#-recommended-models) • [Quick Start & Install](#-quick-start--installation) • [macOS Guide](#-macos-installation-guide-apple-silicon--intel) • [Architecture](#-architecture) • [Connect & Contribute](#-connect--contribute)
+[Screenshots](#-application-screenshots) • [Features](#-key-features) • [The Story of "Aiwa"](#-what-does-aiwa-mean) • [Recommended Models](#-recommended-models) • [Quick Start & Install](#-quick-start--installation) • [macOS Guide](#-macos-installation-guide-apple-silicon--intel) • [Architecture](#-architecture) • [License](#-license) • [Connect & Contribute](#-connect--contribute)
 
 </div>
 
@@ -79,8 +81,8 @@ Hello! I built **AIWA** out of a passion for local-first computing, private AI i
 While cloud AI services offer convenient APIs, they lock users into recurring costs, unpredictable latency, privacy compromises, and walled gardens. Most existing local AI interfaces either act as simple text wrappers around Ollama or require managing a disjointed collection of separate applications (one for LLM chat, one for ComfyUI, another for Whisper, and terminal scripts for RAG).
 
 **AIWA** unifies these capabilities into an integrated, decoupled workstation:
-* A high-performance **FastAPI daemon** orchestrated by a central **VRAM & Unified Memory Arbiter**.
-* A sleek, lightweight **Tauri v2 desktop shell** built with Svelte, TypeScript, and Tailwind CSS featuring clean **Light & Dark** themes.
+* A high-performance **FastAPI daemon** orchestrated by a central **VRAM & Unified Memory Arbiter** with on-demand lazy loading.
+* A sleek, lightweight **Tauri v2 desktop shell** built with Svelte, TypeScript, and Tailwind CSS featuring clean **Light & Dark** themes and native OS window decorations.
 * **Four dedicated, conflict-free studios** (Text & Vision, Image Diffusion, Voice, and Autonomous Agents) that maximize hardware efficiency without process clashes.
 
 ---
@@ -104,15 +106,16 @@ The creator and contributors of AIWA provide this software on an *"as is"* basis
 ## 🚀 Key Features
 
 ### 1. 💬 Dedicated Text & Vision Studio
-* **Dual-Runtime Engine (`llama.cpp` + Native Apple MLX)**: Standardized C++ inference for `.gguf` models across Linux/Windows/macOS (`4,096+` tokens per slot via `--parallel 1`), plus a dedicated **Apple MLX worker (`mlx-lm` / `mlx-vlm`)** for native `.safetensors` acceleration on Apple Silicon Macs.
+* **Dual-Runtime Engine (`llama.cpp` + Native Apple MLX)**: Standardized C++ inference for `.gguf` models across Linux/Windows/macOS (`4,096+` tokens per slot via `--parallel 1`), plus a dedicated **Apple MLX worker (`mlx_worker.py` via `mlx-lm` / `mlx-vlm`)** for native `.safetensors` acceleration on Apple Silicon Macs.
 * **Smart `.safetensors` Header Inspection**: Reads binary tensor headers in under 1ms to accurately distinguish MLX LLMs from Stable Diffusion checkpoints—even when co-located in the same folder—alongside boot-time recursive discovery across `.env`-configured paths.
+* **On-Demand Lazy Loading & Yielding**: Switching to Image Studio automatically unloads the active LLM and keeps it unloaded until you send your next text or agent prompt.
 * **Multimodal Visual Analysis**: Attach `.png`, `.jpg`, or `.pdf` files directly for document extraction (`PyMuPDF4LLM`), UI inspection, and visual reasoning.
 * **In-Bubble Voice Controls**: Every individual assistant answer includes an embedded voice selector, **Play/Pause**, and **Stop** button powered by Kokoro TTS.
 * **WhatsApp-Style Character Personas**: Switch between specialized personas (*Software Architect*, *Creative Storyteller*, *Code Reviewer*, *Research Analyst*, *Executive Brief Writer*) backed by local disk avatars (`data/avatars/` with automatic `default.png` fallback) and a collapsible right-side presence drawer.
 * **In-Chat Editing, Continuation & Export**: Edit (✏️) or delete (✕) any prompt or answer directly, resume long outputs seamlessly with **▶️ Continue**, cancel mid-stream (`⏹ Stop` via `AbortController`), and export any thread to Rich Markdown (`.md`).
 
 ### 2. 🎨 Dual-Engine Image Studio
-* **Python `diffusers` Engine (Default)**: Serverless PyTorch FP16 pipeline supporting custom schedulers (`DPM++ 2M Karras`, `Euler a`, `Euler`, `DDIM`), CFG scale sliders, up to 50 sampling steps, style presets (*Cinematic*, *Photorealistic*, *Anime*, *Digital Art*), deterministic seeds, and batch sizes (1–4).
+* **Python `diffusers` Engine (Default)**: Serverless PyTorch pipeline supporting NVIDIA CUDA (`fp16`), Apple Silicon MPS (`mps`), and CPU fallback, featuring custom schedulers (`DPM++ 2M Karras`, `Euler a`, `Euler`, `DDIM`), CFG scale sliders, up to 50 sampling steps, style presets (*Cinematic*, *Photorealistic*, *Anime*, *Digital Art*), deterministic seeds, and batch sizes (1–4).
 * **Pure C++ `stable-diffusion.cpp` Adapter**: Ultra-low VRAM (~1.8–2.5 GB) GGML diffusion binary in `services/diffusion-cpp/` for constrained hardware.
 * **Strict Diffusion Path Scoping**: Scans only `DIFFUSION_MODEL_DIRECTORIES` from `.env` across all subdirectories (filtering out MLX LLM `.safetensors`), with instant gallery preview, download, and permanent disk deletion.
 
@@ -130,9 +133,9 @@ The creator and contributors of AIWA provide this software on an *"as is"* basis
 * **Process-Isolated Sandbox**: Enforces CPU execution timeouts and memory limits (`resource.setrlimit`) alongside a conditional workspace file explorer.
 
 ### 5. 🌐 Universal Hardware & OpenAI Compatibility
-* **Hardware Probe (`hardware_probe.py`) & Unified Memory Arbiter**: Automatically detects NVIDIA CUDA (`pynvml`), Apple Silicon Metal Unified Memory (`sysctl`/`vm_stat`), AMD ROCm, Vulkan, and CPU SIMD (`AVX2`/`AVX-512`), enforcing an 80% memory ceiling.
+* **Hardware Probe (`hardware_probe.py`) & Unified Memory Arbiter**: Automatically detects NVIDIA CUDA (`pynvml`), Apple Silicon Metal Unified Memory (`sysctl`/`vm_stat`), AMD ROCm (`rocm-smi`/sysfs), Vulkan, and CPU SIMD (`AVX2`/`AVX-512`/`NEON`), enforcing an 80% memory ceiling.
 * **Drop-in `/v1` Compatibility Router**: Standard OpenAI endpoints (`/v1/chat/completions`, `/v1/models`) allowing external IDE tools (Continue.dev, Cursor) and WebUIs to connect directly.
-* **HuggingFace Hub Explorer & YAML Gallery**: Search GGUF repositories with `mmproj` vision projector detection and declarative YAML model presets (`data/models/presets/`).
+* **Declarative YAML Model Gallery & HuggingFace Hub**: One-click installation from curated YAML presets (`data/models/presets/*.yaml`) or live HuggingFace GGUF + `mmproj` search.
 * **Schema Version Tracking & Task Queue**: Records `app_schema_version` (`0.1.0`) in SQLite for safe upgrades and tracks background jobs with human-readable types in `⚡ Tasks`.
 
 ---
@@ -167,7 +170,7 @@ aiwa/
 │   │   ├── api/v1/            # REST, SSE & OpenAI Compatibility (/v1) Routers
 │   │   ├── core/              # Pydantic .env Config, Ephemeral Security, Logging
 │   │   ├── database/          # SQLModel Entities, Seeders & WAL SQLite Engine
-│   │   ├── services/          # Chat, MLX Worker, Diffusers, SD.cpp, Audio, RAG & Agents
+│   │   ├── services/          # Chat, MLX Worker, Diffusers, SD.cpp, Gallery, Audio, RAG & Agents
 │   │   ├── supervisors/       # Model Supervisor, Hardware Probe & VRAM Arbiter
 │   │   └── utils/             # Safetensors Binary Header Inspector
 │   ├── migrations/            # Version-controlled Alembic Migrations
@@ -176,16 +179,19 @@ aiwa/
 ├── data/                      # 100% Local Application Data (Git-Ignored)
 │   ├── avatars/               # Local disk persona avatars (with default.png fallback)
 │   ├── database/              # SQLite DB (WAL Mode + schema version tracking)
-│   ├── models/                # Local GGUF, MLX Bundles, Projectors & YAML Presets
+│   ├── models/                # Local GGUF, MLX Bundles, Projectors & YAML Presets/
 │   ├── uploads/               # User attachments & documents
 │   ├── generated/             # Rendered artwork, TTS clips & master podcasts
 │   └── vector_store/          # Embedded LanceDB tables
 │
 ├── sample/                    # Application Showcase Screenshots
+├── scripts/                   # Build, Sidecar, Installer & Diagnostic Scripts
 ├── services/                  # Standalone External Binaries
 │   ├── llama-cpp/             # Compiled llama-server
 │   └── diffusion-cpp/         # Compiled stable-diffusion.cpp (sd)
-└── Justfile                   # Unified developer task runner
+├── Justfile                   # Unified developer task runner
+├── LICENSE                    # MIT License
+└── THIRD_PARTY_NOTICES.md     # Third-party dependency & model license notices
 ```
 
 ---
@@ -193,7 +199,7 @@ aiwa/
 ## 📦 Quick Start & Installation
 
 ### Linux Prerequisites (Ubuntu / Debian / Arch / Fedora)
-* **GPU**: NVIDIA GPU with 8GB+ VRAM recommended (CUDA 12+ drivers), AMD ROCm, or modern CPU.
+* **GPU**: NVIDIA GPU with 8GB+ VRAM recommended (CUDA 12+ drivers), AMD ROCm, Vulkan GPU, or modern CPU.
 * **Tools**: [`uv`](https://github.com/astral-sh/uv), [`just`](https://github.com/casey/just), Node.js 18+, Rust (`cargo`), and `cmake`.
 * **System Audio & Build Libraries**:
   ```bash
@@ -210,13 +216,13 @@ cd aiwa
 ```
 
 ### 2. Install Dependencies
-Installs backend Python dependencies (including `audio`, `diffusers`, `huggingface-hub`), pre-commit security guards, and Svelte frontend modules:
+Installs backend Python dependencies (including `audio`, `diffusers`, `huggingface-hub`, `pyyaml`), pre-commit security guards, and Svelte frontend modules:
 ```bash
 just install
 ```
 
 ### 3. Compile Core C++ Runtimes
-Compile `llama-server` (and optionally `stable-diffusion.cpp` for ultra-low VRAM image generation):
+Compile `llama-server` (automatically detects CUDA, Metal, ROCm, Vulkan, or CPU SIMD) and optionally `stable-diffusion.cpp`:
 ```bash
 just install-llama
 # Optional pure C++ diffusion engine:
@@ -260,7 +266,7 @@ Open **`http://localhost:5173`** in your browser (or launch via Tauri).
 
 ## 🍎 macOS Installation Guide (Apple Silicon & Intel)
 
-AIWA natively supports macOS via **Apple Silicon Metal Unified Memory** (`GGML_METAL=ON`, `mlx-lm` / `mlx-vlm`, and PyTorch MPS) as well as Intel Macs.
+AIWA natively supports macOS via **Apple Silicon Metal Unified Memory** (`GGML_METAL=ON`, `mlx-lm` / `mlx-vlm`, and PyTorch `mps`) as well as Intel Macs.
 
 ### 1. Install Prerequisites via Homebrew
 Ensure [Xcode Command Line Tools](https://developer.apple.com/xcode/) and [Homebrew](https://brew.sh/) are installed:
@@ -312,7 +318,7 @@ just workstation
 ```bash
 just doctor
 ```
-Verifies Python, CUDA/Metal availability, Unified Memory / VRAM Arbiter ceiling, `llama-server`, SQLite schema (`v0.1.0`), and configured `.env` paths.
+Verifies Python, CUDA/Metal/ROCm/Vulkan availability, Unified Memory / VRAM Arbiter ceiling, `llama-server`, SQLite schema (`v0.1.0`), and configured `.env` paths.
 
 ### GBNF Grammar Test (`just test-grammar`)
 ```bash
@@ -322,17 +328,34 @@ Tests constrained JSON logits masking against a live Pydantic schema to verify z
 
 ---
 
-## 📦 Building Native Desktop Installers (`.AppImage` & `.deb`)
+## 📦 Building Native Desktop Installers (Linux, macOS & Windows)
 
-Package AIWA into standalone Linux desktop bundles with standard OS window frames and an embedded folder-based Python sidecar (`--onedir`):
+AIWA packages into native desktop bundles with standard OS window decorations and an embedded **folder-based Python sidecar (`--onedir`)**:
 
+### Linux (`.AppImage` & `.deb`)
 ```bash
 just package-desktop
 ```
+Outputs to `apps/desktop/src-tauri/target/release/bundle/`:
+* **AppImage**: `appimage/AIWA_0.1.0_amd64.AppImage`
+* **Debian Package**: `deb/aiwa_0.1.0_amd64.deb`
 
-Generated bundles are placed in:
-* **AppImage**: `apps/desktop/src-tauri/target/release/bundle/appimage/AIWA_0.1.0_amd64.AppImage`
-* **Debian Package**: `apps/desktop/src-tauri/target/release/bundle/deb/aiwa_0.1.0_amd64.deb`
+### macOS (`.app` & `.dmg`)
+```bash
+just package-desktop
+```
+Outputs to `apps/desktop/src-tauri/target/release/bundle/`:
+* **Application Bundle**: `macos/AIWA.app`
+* **Disk Image**: `dmg/AIWA_0.1.0_aarch64.dmg`
+
+### Windows (`.exe` NSIS & `.msi`)
+Run in PowerShell on Windows 10/11 (automatically bundles CUDA runtime DLLs if installed):
+```powershell
+just package-windows
+```
+Outputs to `apps\desktop\src-tauri\target\release\bundle\`:
+* **NSIS Installer**: `nsis\AIWA_0.1.0_x64-setup.exe`
+* **MSI Installer**: `msi\AIWA_0.1.0_x64_en-US.msi`
 
 ---
 
@@ -345,20 +368,27 @@ Generated bundles are placed in:
 
 ---
 
+## 📄 License
+
+AIWA's application source code is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+Notice: Integrated runtime engines, libraries, and third-party AI model weights are governed by their own respective licenses (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). In particular, `PyMuPDF` / `PyMuPDF4LLM` are dual-licensed under AGPLv3 and commercial licenses.
+
+---
+
 ## 🤝 Connect & Contribute
 
 AIWA is actively evolving, and contributions from the developer and AI research community are warmly welcomed!
 
-### Roadmap Progress & Upcoming Milestones:
+### Roadmap Progress:
 - [x] HuggingFace GGUF & `mmproj` Model Explorer UI.
 - [x] Native Apple Silicon MLX (`mlx-lm` / `mlx-vlm`) runtime & `.safetensors` header classification.
 - [x] GBNF Grammar Engine for 100% valid JSON structured outputs.
 - [x] `stable-diffusion.cpp` pure C++ diffusion adapter.
 - [x] Drop-in `/v1` OpenAI Compatibility Router.
-- [x] Native Linux `.AppImage` and `.deb` packaging.
-- [ ] AMD ROCm / Vulkan universal builds.
-- [ ] Declarative YAML Model Gallery presets.
-- [ ] Native Windows packaging (`.exe` via NSIS & `.msi` via WiX).
+- [x] AMD ROCm / Vulkan / Apple Metal / CUDA / CPU SIMD hardware probing.
+- [x] Declarative YAML Model Gallery presets.
+- [x] Native desktop packaging across Linux (`.AppImage`/`.deb`), macOS (`.dmg`/`.app`), and Windows (`.exe`/`.msi`).
 
 ### Ways to Contribute:
 1. **Report Bugs & Suggest Features**: Open an [Issue](https://github.com/atawfiq-it/aiwa/issues).
@@ -370,5 +400,3 @@ AIWA is actively evolving, and contributions from the developer and AI research 
 * **GitHub**: [@atawfiq-it](https://github.com/atawfiq-it)
 * **LinkedIn**: [linkedin.com/in/amtawfiq](https://linkedin.com/in/amtawfiq)
 ```
-
----

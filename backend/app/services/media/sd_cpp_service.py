@@ -1,4 +1,6 @@
 import logging
+import platform
+import random
 import subprocess
 import uuid
 from pathlib import Path
@@ -9,13 +11,12 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.database.engine import engine
 from app.database.models import GeneratedFile
-from app.supervisors.model_supervisor import model_supervisor
+from app.supervisors.model_supervisor import ModelState, model_supervisor
 
 logger = logging.getLogger(__name__)
 
 
 def torch_cuda_available() -> bool:
-    """Checks if PyTorch has CUDA access for RNG device flag selection."""
     try:
         import torch
 
@@ -26,11 +27,11 @@ def torch_cuda_available() -> bool:
 
 class SDCppService:
     def __init__(self):
-        self.sd_bin = settings.BASE_DIR / "services" / "diffusion-cpp" / "sd"
+        bin_name = "sd.exe" if platform.system() == "Windows" else "sd"
+        self.sd_bin = settings.BASE_DIR / "services" / "diffusion-cpp" / bin_name
 
     def is_installed(self) -> bool:
-        """Verifies if the compiled C++ executable is present on disk."""
-        return self.sd_bin.exists()
+        return self.sd_bin.exists() and self.sd_bin.is_file()
 
     async def generate(
         self,
@@ -41,25 +42,31 @@ class SDCppService:
         height: int = 512,
         steps: int = 20,
         guidance_scale: float = 7.0,
-        seed: int = 42,
+        seed: int = -1,
     ) -> dict[str, Any]:
-        """Executes the pure C++ stable-diffusion.cpp binary with dedicated GPU allocation."""
+        if model_supervisor.process or model_supervisor.state != ModelState.UNLOADED:
+            logger.info("🔄 Process Change (LLM -> sd.cpp): Unloading LLM and keeping it unloaded.")
+            await model_supervisor.unload_model()
+
         if not self.is_installed():
             raise RuntimeError(
-                "stable-diffusion.cpp is not installed. Run 'just install-sd-cpp' first."
+                "stable-diffusion.cpp binary not found. Run 'just install-sd-cpp' first."
             )
 
         ckpt_file = Path(checkpoint_path).resolve()
         if not ckpt_file.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {ckpt_file}")
+            raise FileNotFoundError(f"Checkpoint not found at: {ckpt_file}")
 
-        # Yield GPU from LLM if loaded to prevent VRAM competition
+        # Yield GPU from LLM if active
         if model_supervisor.process:
             logger.info("Yielding GPU from LLM to stable-diffusion.cpp...")
             await model_supervisor.unload_model()
 
+        if seed == -1:
+            seed = random.randint(0, 2**31 - 1)
+
         gen_id = uuid.uuid4().hex[:8]
-        output_prefix = str(settings.GENERATED_DIR / f"sd_cpp_{gen_id}")
+        output_file = settings.GENERATED_DIR / f"sd_cpp_{gen_id}.png"
 
         cmd = [
             str(self.sd_bin),
@@ -69,9 +76,9 @@ class SDCppService:
             prompt,
             "-n",
             negative_prompt,
-            "--width",
+            "-W",
             str(width),
-            "--height",
+            "-H",
             str(height),
             "--steps",
             str(steps),
@@ -82,16 +89,16 @@ class SDCppService:
             "-s",
             str(seed),
             "-o",
-            f"{output_prefix}.png",
+            str(output_file),
         ]
 
-        logger.info(f"Executing sd.cpp binary: {' '.join(cmd)}")
+        logger.info(f"Executing stable-diffusion.cpp: {' '.join(cmd)}")
         process = subprocess.run(cmd, capture_output=True, text=True)
 
         if process.returncode != 0:
             raise RuntimeError(f"sd.cpp execution failed: {process.stderr}")
 
-        final_file = Path(f"{output_prefix}.png")
+        final_file = output_file
         if not final_file.exists():
             matches = list(settings.GENERATED_DIR.glob(f"*sd_cpp_{gen_id}*"))
             if matches:
@@ -101,7 +108,6 @@ class SDCppService:
 
         file_size = final_file.stat().st_size
 
-        # Persist generated artifact record in SQLite
         with Session(engine) as db:
             gen_file = GeneratedFile(
                 file_type="image",
@@ -110,19 +116,24 @@ class SDCppService:
                 mime_type="image/png",
                 file_size_bytes=file_size,
                 prompt=prompt,
-                metadata_json=f'{{"engine": "stable-diffusion.cpp", "steps": {steps}}}',
+                metadata_json=(
+                    f'{{"engine": "stable-diffusion.cpp", '
+                    f'"checkpoint": "{ckpt_file.name}", '
+                    f'"steps": {steps}, "seed": {seed}}}'
+                ),
             )
             db.add(gen_file)
             db.commit()
             db.refresh(gen_file)
             file_id = gen_file.id
 
-        logger.info(f"✅ stable-diffusion.cpp generated artifact: {final_file.name}")
+        image_url = f"http://{settings.API_HOST}:{settings.API_PORT}/api/v1/media/files/{file_id}"
         return {
             "file_id": file_id,
             "file_name": final_file.name,
-            "image_url": f"http://127.0.0.1:8000/api/v1/media/files/{file_id}",
+            "image_url": image_url,
             "file_path": str(final_file.resolve()),
+            "seed": seed,
         }
 
 

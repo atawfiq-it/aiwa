@@ -40,8 +40,64 @@ class ModelSupervisor:
     def base_url(self) -> str:
         return f"http://{settings.LLAMA_SERVER_HOST}:{settings.LLAMA_SERVER_PORT}"
 
+    async def flush_external_gpu_caches(self) -> None:
+        """Stops any lingering ComfyUI service and flushes PyTorch CUDA/MPS memory caches."""
+        import gc
+
+        try:
+            from app.supervisors.comfyui_supervisor import comfyui_supervisor
+
+            await comfyui_supervisor.stop()
+        except Exception:
+            pass
+
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()
+        except Exception:
+            pass
+
+    async def ensure_loaded_on_demand(self, model_id: str | None = None) -> ModelConfig:
+        """Ensures the requested or default LLM is loaded, unloading external GPU consumers first."""
+        if self.state == ModelState.READY and self.active_model:
+            if not model_id or self.active_model.id == model_id:
+                return self.active_model
+
+        # 1. Clear diffusion/external caches before loading LLM
+        await self.flush_external_gpu_caches()
+
+        # 2. Resolve target model from ID, last active, or DB default
+        from sqlmodel import Session, select
+
+        from app.database.engine import engine
+
+        with Session(engine) as db:
+            target = None
+            if model_id:
+                target = db.get(ModelConfig, model_id)
+            if not target and self.active_model:
+                target = db.get(ModelConfig, self.active_model.id)
+            if not target:
+                target = db.exec(
+                    select(ModelConfig).where(ModelConfig.is_default == True)  # noqa: E712
+                ).first()
+            if not target:
+                target = db.exec(select(ModelConfig)).first()
+
+            if not target:
+                raise RuntimeError("No LLM models are registered in the database.")
+
+        logger.info(f"⚡ On-Demand Load: Waking up '{target.display_name}'...")
+        await self.load_model(target)
+        return target
+
     def is_idle_for(self, seconds: float) -> bool:
-        """Returns True if no active requests exist and idle duration exceeds threshold."""
+        """Returns True if zero inference requests are active and idle duration exceeds threshold."""
         if self.active_requests > 0:
             return False
         if not self.last_active_at:
@@ -53,10 +109,10 @@ class ModelSupervisor:
         return {
             "state": self.state.value,
             "active_model_id": self.active_model.id if self.active_model else None,
-            "active_model_name": (self.active_model.display_name if self.active_model else None),
+            "active_model_name": self.active_model.display_name if self.active_model else None,
             "active_requests": self.active_requests,
             "available_slots": self.slot_semaphore._value,
-            "last_active_at": (self.last_active_at.isoformat() if self.last_active_at else None),
+            "last_active_at": self.last_active_at.isoformat() if self.last_active_at else None,
             "vram": vram_arbiter.get_vram_status(),
         }
 
@@ -80,7 +136,7 @@ class ModelSupervisor:
             self.state = ModelState.LOADING
             self.active_model = model
 
-            # Explicit directory / MLX check (never pass a directory to llama-server)
+            # 1. Detect MLX Directory vs GGUF File
             is_mlx = model.format == "mlx" or (
                 model_path.is_dir() and (model_path / "config.json").exists()
             )
@@ -110,6 +166,7 @@ class ModelSupervisor:
                 logger.info(f"🍎 Spawning Apple MLX Worker (Vision={is_vision}): {' '.join(cmd)}")
             else:
                 if model_path.is_dir():
+                    self.state = ModelState.FAILED
                     raise RuntimeError(f"Cannot load directory '{model_path}' with llama-server.")
 
                 calculated_layers = (
@@ -177,7 +234,7 @@ class ModelSupervisor:
                 except httpx.RequestError:
                     pass
                 await asyncio.sleep(1)
-        raise TimeoutError(f"Timed out after {timeout_seconds}s waiting for inference readiness.")
+        raise TimeoutError(f"Timed out after {timeout_seconds}s waiting for inference server.")
 
     async def unload_model(self) -> None:
         async with self.lock:

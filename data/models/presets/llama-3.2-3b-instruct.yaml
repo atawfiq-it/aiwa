@@ -1,0 +1,12 @@
+id: llama-3.2-3b-instruct
+name: "Llama 3.2 Instruct (3B)"
+description: "Lightweight, high-speed model ideal for rapid chat and CPU fallback."
+format: gguf
+repo_id: "bartowski/Llama-3.2-3B-Instruct-GGUF"
+filename: "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+mmproj_filename: null
+context_length: 8192
+vision_supported: false
+min_vram_gb: 2.5
+platforms: ["linux", "windows", "darwin"]
+tags: ["Fast", "Lightweight", "GGUF"]

@@ -17,7 +17,6 @@ from app.database.engine import get_db
 from app.database.models import AppSetting, Attachment, GeneratedFile, Task
 from app.services.media.comfyui import comfyui_adapter
 from app.services.media.diffusers_service import direct_diffusion
-from app.services.media.sd_cpp_service import sd_cpp_service
 from app.services.tasks.queue import task_queue
 
 logger = logging.getLogger(__name__)
@@ -333,24 +332,3 @@ def set_default_diffusion_checkpoint(req: DefaultDiffusionRequest, db: Session =
     db.add(record)
     db.commit()
     return {"status": "success", "checkpoint_path": req.checkpoint_path}
-
-
-@router.post("/diffusion/generate-cpp")
-async def generate_image_cpp(req: DirectImageRequest):
-    """Generates image using ultra-low VRAM pure C++ stable-diffusion.cpp engine."""
-    try:
-        return await sd_cpp_service.generate(
-            prompt=req.prompt,
-            negative_prompt=req.negative_prompt,
-            checkpoint_path=req.checkpoint_path,
-            width=req.width,
-            height=req.height,
-            steps=req.steps,
-            guidance_scale=req.guidance_scale,
-            seed=req.seed,
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        ) from e

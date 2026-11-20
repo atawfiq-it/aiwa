@@ -10,9 +10,11 @@ from sqlmodel import Session, select
 from app.core.config import Settings
 from app.core.security import verify_local_token
 from app.database.engine import get_db
-from app.database.models import AppSetting, ModelConfig
+from app.database.models import AppSetting, ModelConfig, Task
+from app.services.models.gallery import model_gallery
 from app.services.models.scanner import model_scanner
-from app.supervisors.model_supervisor import model_supervisor
+from app.services.tasks.queue import task_queue
+from app.supervisors.model_supervisor import model_supervisor, vram_arbiter
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,41 @@ router = APIRouter(
 
 class DirectoryListRequest(BaseModel):
     directories: list[str]
+
+
+@router.get("/gallery")
+def list_model_gallery():
+    """Returns curated declarative YAML model presets with OS compatibility flags."""
+    return model_gallery.load_presets()
+
+
+@router.post("/gallery/{preset_id}/install", response_model=Task)
+def install_gallery_preset(preset_id: str):
+    """Triggers a background download and auto-configuration task for a YAML preset."""
+    preset = model_gallery.get_preset(preset_id)
+    if not preset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found")
+    if not preset.get("compatible"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Preset '{preset['name']}' is not supported on this OS/Hardware.",
+        )
+
+    return task_queue.submit_task(
+        task_type="gallery_preset_install",
+        parameters={"preset_id": preset_id},
+    )
+
+
+@router.get("/hardware")
+def get_hardware_profile():
+    """Returns detailed CPU/GPU acceleration telemetry."""
+    from app.supervisors.hardware_probe import hardware_probe
+
+    return {
+        "hardware": hardware_probe.detect_accelerator(),
+        "vram": vram_arbiter.get_vram_status(),
+    }
 
 
 @router.get("/directories")
@@ -68,7 +105,6 @@ class ScanRequest(BaseModel):
 class RegisterScannedModelRequest(BaseModel):
     display_name: str
     file_path: str
-    format: str = "gguf"  # Added format support
     mmproj_path: str | None = None
     context_length: int = 4096
     vision_supported: bool = False
@@ -92,41 +128,26 @@ def scan_local_models(req: ScanRequest):
 
 
 @router.post("/register-scanned", response_model=ModelConfig)
-@router.post("/register-scanned", response_model=ModelConfig)
 def register_scanned_model(
     req: RegisterScannedModelRequest,
     db: Session = Depends(get_db),
 ):
+    """Registers a scanned model into SQLite configuration."""
     model_path = Path(req.file_path)
     if not model_path.exists():
-        raise HTTPException(status_code=404, detail=f"Path not found: {req.file_path}")
+        raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
 
-    existing = db.exec(
-        select(ModelConfig).where(ModelConfig.file_path == str(model_path.resolve()))
-    ).first()
+    # Check if already registered
+    existing = db.exec(select(ModelConfig).where(ModelConfig.file_path == req.file_path)).first()
     if existing:
-        existing.format = req.format
         existing.context_length = max(req.context_length, 4096)
-        existing.vision_supported = req.vision_supported
+        if req.mmproj_path:
+            existing.mmproj_path = req.mmproj_path
+            existing.vision_supported = True
         db.add(existing)
         db.commit()
         db.refresh(existing)
         return existing
-
-    model = ModelConfig(
-        display_name=req.display_name,
-        file_path=str(model_path.resolve()),
-        format=req.format,
-        context_length=max(req.context_length, 4096),
-        vision_supported=req.vision_supported,
-        mmproj_path=req.mmproj_path,
-        gpu_layers=-1,
-        is_default=req.is_default,
-    )
-    db.add(model)
-    db.commit()
-    db.refresh(model)
-    return model
 
 
 class ModelRegisterRequest(BaseModel):
@@ -143,19 +164,33 @@ class ModelRegisterRequest(BaseModel):
 
 @router.get("", response_model=list[ModelConfig])
 def list_models(db: Session = Depends(get_db)):
-    """Lists registered GGUF files and valid MLX model directories."""
+    """Lists registered GGUF files and valid MLX model directories with diagnostic logging."""
     all_models = db.exec(select(ModelConfig)).all()
     valid_models = []
 
+    print(f"\n📋 [LIST_MODELS] Checking {len(all_models)} row(s) in SQLite 'models' table:")
     for m in all_models:
         p = Path(m.file_path)
         if m.format == "mlx":
-            if p.exists() and p.is_dir() and (p / "config.json").exists():
+            has_cfg = (p / "config.json").exists() if p.is_dir() else False
+            if p.exists() and p.is_dir() and has_cfg:
+                print(f"   ✅ ACCEPTED (MLX): {m.display_name} ({m.file_path})")
                 valid_models.append(m)
+            else:
+                print(
+                    f"   ❌ REJECTED (MLX): {m.display_name} | exists={p.exists()} "
+                    f"is_dir={p.is_dir()} has_config={has_cfg} path={m.file_path}"
+                )
         else:
             if p.exists() and p.is_file() and not p.is_dir():
+                print(f"   ✅ ACCEPTED (GGUF): {m.display_name} ({m.file_path})")
                 valid_models.append(m)
-
+            else:
+                print(
+                    f"   ❌ REJECTED ({m.format}): {m.display_name} | exists={p.exists()} "
+                    f"is_file={p.is_file()} is_dir={p.is_dir()} path={m.file_path}"
+                )
+    print(f"📋 [LIST_MODELS] Returning {len(valid_models)} valid model(s) to UI.\n")
     return valid_models
 
 
@@ -226,11 +261,21 @@ async def load_model(model_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Model configuration not found",
         )
+
+    # Persist as new default in SQLite
+    all_models = db.exec(select(ModelConfig)).all()
+    for m in all_models:
+        m.is_default = m.id == model_id
+        db.add(m)
+    db.commit()
+
     try:
         await model_supervisor.load_model(model)
-        return {"status": "success", "message": f"Model {model.display_name} loaded"}
+        return {
+            "status": "success",
+            "message": f"Model {model.display_name} loaded and set as default",
+        }
     except Exception as e:
-        logger.error(f"Error loading model {model_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),

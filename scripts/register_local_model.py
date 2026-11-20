@@ -82,7 +82,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mmproj", default="", help="Path to mmproj GGUF file (for vision)"
     )
-    parser.add_argument("--name", default="Qwen3-VL-8B", help="Display name")
+    parser.add_argument("--name", default="Qwen3-VL-4B", help="Display name")
     parser.add_argument("--ctx", type=int, default=4096, help="Context length")
     parser.add_argument(
         "--token", default="", help="Session token (reads from file if empty)"
