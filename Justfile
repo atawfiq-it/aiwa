@@ -205,19 +205,7 @@ db-reset:
     just migrate-up
     uv run --project backend python -c "from app.database.seed_characters import seed_characters_if_empty; from app.database.seed_agents import seed_scenario_agents_if_empty; seed_characters_if_empty(); seed_scenario_agents_if_empty(); print('✅ Database wiped clean. Fresh starter personas and agents seeded.')"
 
+
 # Package Windows NSIS (.exe) and MSI installers (Run on Windows PowerShell)
- ? 
- >>>>>>>>>>>>># Package Windows NSIS (.exe) and MSI installers (Run on Windows PowerShell)
-
-		
-
-	
-
 package-windows:
-
-		
-
-	
-
-    powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1;'ppppo[ package-windows:
     powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1
