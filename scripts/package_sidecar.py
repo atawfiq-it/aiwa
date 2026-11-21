@@ -4,7 +4,6 @@ import platform
 import shutil
 import stat
 import subprocess
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = REPO_ROOT / "backend"
@@ -100,18 +99,28 @@ def build_sidecar():
     print(f"📦 Packaging folder-based sidecar for {system} ({target_triple})...")
 
     cmd = [
-        "uv", "run", "--project", str(BACKEND_DIR),
+        "uv",
+        "run",
+        "--project",
+        str(BACKEND_DIR),
         "pyinstaller",
-        "--name", "aiwa-backend-app",
+        "--name",
+        "aiwa-backend-app",
         "--onedir",
         "--noconfirm",
         "--clean",
-        "--add-data", f"{BACKEND_DIR / 'migrations'}{data_sep}migrations",
-        "--hidden-import", "sqlmodel",
-        "--hidden-import", "uvicorn",
-        "--hidden-import", "sqlite3",
-        "--hidden-import", "engineio.async_drivers.asgi",
-        "--hidden-import", "yaml",
+        "--add-data",
+        f"{BACKEND_DIR / 'migrations'}{data_sep}migrations",
+        "--hidden-import",
+        "sqlmodel",
+        "--hidden-import",
+        "uvicorn",
+        "--hidden-import",
+        "sqlite3",
+        "--hidden-import",
+        "engineio.async_drivers.asgi",
+        "--hidden-import",
+        "yaml",
         str(BACKEND_DIR / "app" / "main.py"),
     ]
 
@@ -119,7 +128,9 @@ def build_sidecar():
 
     dist_folder = BACKEND_DIR / "dist" / "aiwa-backend-app"
     if not dist_folder.exists():
-        raise FileNotFoundError(f"PyInstaller failed to create directory: {dist_folder}")
+        raise FileNotFoundError(
+            f"PyInstaller failed to create directory: {dist_folder}"
+        )
 
     if SIDECAR_DIR.exists():
         shutil.rmtree(SIDECAR_DIR)
@@ -136,11 +147,13 @@ def build_sidecar():
         launcher_path = BINARIES_DIR / f"aiwa-backend-{target_triple}.exe"
         print(f"🔨 Compiling Windows sidecar wrapper: {launcher_path.name}...")
         build_windows_exe_launcher(launcher_path)
-        shutil.copy(dist_folder / "aiwa-backend-app.exe", BINARIES_DIR / "aiwa-backend-app.exe")
+        shutil.copy(
+            dist_folder / "aiwa-backend-app.exe", BINARIES_DIR / "aiwa-backend-app.exe"
+        )
     else:
         launcher_path = BINARIES_DIR / f"aiwa-backend-{target_triple}"
-        launcher_script = f"""#!/usr/bin/env bash
-DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" >/dev/null 2>&1 && pwd)"
+        launcher_script = """#!/usr/bin/env bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 RESOURCE_DIR="$DIR/../sidecar/runtime"
 
 if [ -f "$RESOURCE_DIR/aiwa-backend-app" ]; then
@@ -150,7 +163,9 @@ else
 fi
 """
         launcher_path.write_text(launcher_script, encoding="utf-8")
-        launcher_path.chmod(launcher_path.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR | stat.S_IXUSR)
+        launcher_path.chmod(
+            launcher_path.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR | stat.S_IXUSR
+        )
         shutil.copy(dist_folder / "aiwa-backend-app", BINARIES_DIR / "aiwa-backend-app")
 
     print("\n✅ Folder-based sidecar staged successfully:")

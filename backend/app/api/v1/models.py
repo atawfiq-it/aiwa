@@ -15,6 +15,7 @@ from app.services.models.gallery import model_gallery
 from app.services.models.scanner import model_scanner
 from app.services.tasks.queue import task_queue
 from app.supervisors.model_supervisor import model_supervisor, vram_arbiter
+from app.utils.port_manager import PortConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +276,17 @@ async def load_model(model_id: str, db: Session = Depends(get_db)):
             "status": "success",
             "message": f"Model {model.display_name} loaded and set as default",
         }
+    except PortConflictError as pce:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "type": "port_conflict",
+                "port": pce.port,
+                "service_name": pce.service_name,
+                "owner": pce.owner,
+                "model_id": model_id,
+            },
+        ) from pce
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
