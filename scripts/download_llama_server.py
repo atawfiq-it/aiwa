@@ -63,7 +63,9 @@ def build_llama_server():
 
     cmake_flags = ["-DCMAKE_BUILD_TYPE=Release"]
 
-    if env_accel == "metal" or (env_accel == "auto" and system == "Darwin" and machine == "arm64"):
+    if env_accel == "metal" or (
+        env_accel == "auto" and system == "Darwin" and machine == "arm64"
+    ):
         print("🍎 Enabling Apple Metal GPU acceleration (-DGGML_METAL=ON)...")
         cmake_flags.extend(["-DGGML_METAL=ON", "-DGGML_METAL_EMBED_LIBRARY=ON"])
 
@@ -71,7 +73,9 @@ def build_llama_server():
         print("⚡ Enabling NVIDIA CUDA acceleration (-DGGML_CUDA=ON)...")
         cmake_flags.append("-DGGML_CUDA=ON")
 
-    elif env_accel == "rocm" or (env_accel == "auto" and (os.path.exists("/dev/kfd") or has_tool("hipcc"))):
+    elif env_accel == "rocm" or (
+        env_accel == "auto" and (os.path.exists("/dev/kfd") or has_tool("hipcc"))
+    ):
         print("🔴 Enabling AMD ROCm/HIP acceleration (-DGGML_HIP=ON)...")
         cmake_flags.append("-DGGML_HIP=ON")
 

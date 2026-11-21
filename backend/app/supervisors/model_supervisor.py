@@ -13,6 +13,7 @@ import httpx
 from app.core.config import settings
 from app.database.models import ModelConfig
 from app.supervisors.vram_arbiter import vram_arbiter
+from app.utils.port_manager import resolve_port_conflict
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,16 @@ class ModelSupervisor:
                 worker_script = (
                     Path(__file__).resolve().parent.parent / "services" / "models" / "mlx_worker.py"
                 )
+
+                # Auto-reclaim orphaned engine or surface conflict to UI
+                resolved_port = resolve_port_conflict(
+                    host=settings.LLAMA_SERVER_HOST,
+                    port=settings.LLAMA_SERVER_PORT,
+                    service_name="LLM Inference Engine",
+                    interactive_cli=False,
+                )
+                settings.LLAMA_SERVER_PORT = resolved_port
+
                 cmd = [
                     sys.executable,
                     str(worker_script),
