@@ -169,7 +169,6 @@ class DirectDiffusionService:
         batch_size: int = 1,
         style_preset: str = "none",
     ) -> dict[str, Any]:
-
         if model_supervisor.process or model_supervisor.state != ModelState.UNLOADED:
             logger.info(
                 "🔄 Process Change (LLM -> Diffusion): Unloading LLM and keeping it unloaded."

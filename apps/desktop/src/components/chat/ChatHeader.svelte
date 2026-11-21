@@ -8,12 +8,19 @@
     registeredModels,
     supervisorStatus,
   } from '../../lib/stores';
+  import PortConflictModal from '../common/PortConflictModal.svelte';
 
   export let isPersonaPanelOpen: boolean = true;
 
   let selectedDropdownModelId = '';
   let localPersonaId = '';
   let isSwitching = false;
+  let activePortConflict: {
+    port: number;
+    service_name: string;
+    owner: { pid: number | null; name: string; cmdline: string };
+    model_id?: string;
+  } | null = null;
 
   $: if ($activeModelId && !selectedDropdownModelId) {
     selectedDropdownModelId = $activeModelId;
@@ -55,20 +62,34 @@
   }
 
   async function applyModelSwitch() {
-    if (!selectedDropdownModelId || selectedDropdownModelId === $activeModelId) return;
+    if (!selectedDropdownModelId || selectedDropdownModelId === $activeModelId || isSwitching) return;
     isSwitching = true;
+
     try {
       const res = await apiFetch(`/models/${selectedDropdownModelId}/load`, { method: 'POST' });
+
+      if (res.status === 409) {
+        const err = await res.json().catch(() => ({}));
+        if (err.detail?.type === 'port_conflict') {
+          activePortConflict = err.detail;
+          return;
+        }
+      }
+
       if (res.ok) {
         $activeModelId = selectedDropdownModelId;
         const statusRes = await apiFetch('/models/status');
         if (statusRes.ok) $supervisorStatus = await statusRes.json();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed loading model: ${err.detail || 'Unknown error'}`);
       }
+    } catch (e: any) {
+      alert(`Network error: ${e.message}`);
     } finally {
       isSwitching = false;
     }
   }
-
 </script>
 
 <header class="h-14 border-b border-[var(--border-color)] px-6 flex items-center justify-between bg-[var(--bg-card)] select-none shadow-sm">
@@ -101,7 +122,7 @@
       {/if}
     </div>
 
-    <!-- Persona Selector (No Emojis) -->
+    <!-- Persona Selector -->
     <div class="flex items-center gap-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl px-3 py-1.5">
       <span class="text-xs text-[var(--text-muted)] font-medium">Persona:</span>
       <select
@@ -125,7 +146,7 @@
       </div>
     {/if}
 
-    <!-- Toggle Persona Panel Button (Re-opens when closed) -->
+    <!-- Toggle Persona Panel Button -->
     <button
       type="button"
       on:click={() => (isPersonaPanelOpen = !isPersonaPanelOpen)}
@@ -140,3 +161,11 @@
     </button>
   </div>
 </header>
+
+<!-- Port Conflict Interactive Modal -->
+<PortConflictModal
+  bind:conflict={activePortConflict}
+  onResolved={(retry) => {
+    if (retry) applyModelSwitch();
+  }}
+/>

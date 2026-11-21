@@ -20,6 +20,7 @@ from app.api.v1.knowledge_bases import router as kb_router
 from app.api.v1.media import router as media_router
 from app.api.v1.models import router as models_router
 from app.api.v1.openai_compat.router import router as openai_compat_router
+from app.api.v1.system import router as system_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.workflows import router as workflows_router
 from app.core.config import settings
@@ -251,6 +252,7 @@ app.include_router(workflows_router, prefix=settings.API_V1_PREFIX)
 app.include_router(characters_router, prefix=settings.API_V1_PREFIX)
 app.include_router(hf_router, prefix=settings.API_V1_PREFIX)
 app.include_router(openai_compat_router)
+app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/api/v1/health")
@@ -279,9 +281,19 @@ async def verify_auth():
 if __name__ == "__main__":
     import uvicorn
 
+    from app.utils.port_manager import resolve_port_conflict
+
+    resolved_port = resolve_port_conflict(
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        service_name="AIWA API Daemon",
+        interactive_cli=True,
+    )
+    settings.API_PORT = resolved_port
+
     uvicorn.run(
         "app.main:app",
         host=settings.API_HOST,
-        port=settings.API_PORT,
+        port=resolved_port,
         reload=not settings.is_production,
     )
